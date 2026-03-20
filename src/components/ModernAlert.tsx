@@ -1,5 +1,14 @@
-import React from 'react';
-import { Modal, View, Text, StyleSheet, TouchableOpacity, Animated, ActivityIndicator } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { THEME } from '../theme/theme';
 
 interface ModernAlertProps {
   visible: boolean;
@@ -9,73 +18,96 @@ interface ModernAlertProps {
   onConfirm?: () => void;
   confirmText?: string;
   cancelText?: string;
-  progress?: number; // 0 to 100
+  progress?: number;
   statusText?: string;
   loading?: boolean;
 }
 
-export function ModernAlert({ 
-  visible, 
-  title, 
-  message, 
-  onCancel, 
-  onConfirm, 
-  confirmText = 'Confirm', 
-  cancelText = 'Cancel',
+export function ModernAlert({
+  visible,
+  title,
+  message,
+  onCancel,
+  onConfirm,
+  confirmText = 'Continue',
+  cancelText = 'Not now',
   progress,
   statusText,
-  loading
+  loading,
 }: ModernAlertProps) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(14)).current;
+
+  useEffect(() => {
+    if (!visible) return;
+
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: THEME.motion.normal,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: THEME.motion.normal,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [opacity, translateY, visible]);
+
   if (!visible) return null;
 
   return (
-    <Modal
-      transparent
-      visible={visible}
-      animationType="fade"
-      onRequestClose={onCancel}
-    >
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onCancel}>
       <View style={styles.overlay}>
-        <View style={styles.alertCard}>
+        <Animated.View
+          style={[
+            styles.card,
+            {
+              opacity,
+              transform: [{ translateY }],
+            },
+          ]}
+        >
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.message}>{message}</Text>
-          
+
           {(loading || progress !== undefined) && (
             <View style={styles.progressSection}>
               {progress !== undefined ? (
                 <>
-                  <View style={styles.progressBarBg}>
-                    <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
+                  <View style={styles.progressTrack}>
+                    <View style={[styles.progressFill, { width: `${progress}%` }]} />
                   </View>
-                  <Text style={styles.statusLabel}>{statusText || `${Math.round(progress)}%`}</Text>
+                  <Text style={styles.helper}>{statusText || `${Math.round(progress)}% complete`}</Text>
                 </>
               ) : (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator color="#8ab4f8" size="small" />
-                  <Text style={styles.statusLabel}>{statusText || 'Processing...'}</Text>
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator size="small" color={THEME.colors.primary} />
+                  <Text style={styles.helper}>{statusText || 'Working...'}</Text>
                 </View>
               )}
             </View>
           )}
 
-          <View style={styles.buttonContainer}>
-            {onCancel && !loading && progress === undefined && (
-              <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
-                <Text style={styles.cancelText}>{cancelText}</Text>
+          <View style={styles.actions}>
+            {onCancel && !loading && progress === undefined ? (
+              <TouchableOpacity style={styles.secondaryButton} onPress={onCancel} activeOpacity={0.85}>
+                <Text style={styles.secondaryLabel}>{cancelText}</Text>
               </TouchableOpacity>
-            )}
-            
-            {onConfirm && !loading && progress === undefined && (
-              <TouchableOpacity style={styles.confirmButton} onPress={onConfirm}>
-                <Text style={styles.confirmText}>{confirmText}</Text>
+            ) : null}
+
+            {onConfirm && !loading && progress === undefined ? (
+              <TouchableOpacity style={styles.primaryButton} onPress={onConfirm} activeOpacity={0.9}>
+                <Text style={styles.primaryLabel}>{confirmText}</Text>
               </TouchableOpacity>
-            )}
+            ) : null}
 
             {(loading || progress !== undefined) && (
-               <Text style={styles.footerInfo}>Please keep the app open</Text>
+              <Text style={styles.footerNote}>Keep the app open while this finishes.</Text>
             )}
           </View>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -84,92 +116,84 @@ export function ModernAlert({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    justifyContent: 'center',
+    backgroundColor: THEME.colors.scrim,
+    padding: THEME.spacing.lg,
   },
-  alertCard: {
+  card: {
     width: '100%',
-    backgroundColor: '#1c1c1e',
-    borderRadius: 28,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 15,
-    elevation: 10,
+    backgroundColor: THEME.colors.surface,
+    borderRadius: THEME.borderRadius.lg,
+    padding: THEME.spacing.lg,
     borderWidth: 1,
-    borderColor: '#303134',
+    borderColor: THEME.colors.borderSoft,
+    ...THEME.shadow.soft,
   },
   title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#e8eaed',
-    marginBottom: 12,
+    ...THEME.typography.titleSmall,
+    color: THEME.colors.text,
+    marginBottom: THEME.spacing.sm,
   },
   message: {
-    fontSize: 16,
-    color: '#9aa0a6',
-    lineHeight: 22,
-    marginBottom: 24,
+    ...THEME.typography.body,
+    color: THEME.colors.textSecondary,
   },
   progressSection: {
-    marginBottom: 24,
+    marginTop: THEME.spacing.lg,
   },
-  progressBarBg: {
-    height: 6,
-    backgroundColor: '#303134',
-    borderRadius: 3,
+  progressTrack: {
+    height: 8,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.surfaceSecondary,
     overflow: 'hidden',
-    marginBottom: 8,
   },
-  progressBarFill: {
+  progressFill: {
     height: '100%',
-    backgroundColor: '#8ab4f8',
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.primary,
   },
-  loadingContainer: {
+  loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  statusLabel: {
-    fontSize: 14,
-    color: '#8ab4f8',
-    fontWeight: '600',
-    marginLeft: 8,
+  helper: {
+    ...THEME.typography.bodyMedium,
+    color: THEME.colors.primary,
+    marginTop: THEME.spacing.sm,
   },
-  buttonContainer: {
+  actions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
-    minHeight: 40,
+    marginTop: THEME.spacing.lg,
   },
-  cancelButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    marginRight: 8,
+  secondaryButton: {
+    height: 42,
+    paddingHorizontal: THEME.spacing.md,
+    borderRadius: THEME.borderRadius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: THEME.spacing.sm,
   },
-  cancelText: {
-    color: '#8ab4f8',
-    fontSize: 14,
-    fontWeight: '600',
-    textTransform: 'uppercase',
+  secondaryLabel: {
+    ...THEME.typography.bodyMedium,
+    color: THEME.colors.primary,
   },
-  confirmButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    backgroundColor: '#303134',
-    borderRadius: 12,
+  primaryButton: {
+    height: 42,
+    paddingHorizontal: THEME.spacing.lg,
+    borderRadius: THEME.borderRadius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: THEME.colors.primary,
   },
-  confirmText: {
-    color: '#8ab4f8',
-    fontSize: 14,
-    fontWeight: '600',
-    textTransform: 'uppercase',
+  primaryLabel: {
+    ...THEME.typography.bodyMedium,
+    color: THEME.colors.white,
   },
-  footerInfo: {
-    color: '#5f6368',
-    fontSize: 12,
-    fontStyle: 'italic',
-  }
+  footerNote: {
+    ...THEME.typography.label,
+    color: THEME.colors.textMuted,
+  },
 });

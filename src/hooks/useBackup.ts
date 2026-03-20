@@ -1,13 +1,15 @@
 import { useState, useCallback, useEffect } from 'react';
+import * as MediaLibrary from 'expo-media-library';
 import { useMedia } from './useMedia';
 import { useUpload } from './useUpload';
 import { dbService } from '../api/Database';
 import { CONFIG } from '../constants/Config';
 import { usePendingUploads } from './usePendingUploads';
 import { APP_CONSTANTS } from '../constants/AppConstants';
+import { normalizeTimestamp } from '../utils/formatters';
 
 export function useBackup() {
-  const { sections, refresh: refreshMedia } = useMedia();
+  const { refresh: refreshMedia, totalCount } = useMedia();
   const { uploadAsset, uploadingId, progress } = useUpload();
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
@@ -43,23 +45,42 @@ export function useBackup() {
     setBackedUpCount(0);
     
     try {
-      await refreshMedia();
-      const allAssets = sections.flatMap(s => s.data);
-      for (const asset of allAssets) {
-        try {
-          const result = await uploadAsset(asset);
-          if (result.success && !result.skipped) {
-            setBackedUpCount(prev => prev + 1);
+      let after: string | undefined;
+      let hasNextPage = true;
+
+      while (hasNextPage) {
+        const page = await MediaLibrary.getAssetsAsync({
+          first: APP_CONSTANTS.SYNC.SCAN_BATCH_SIZE,
+          after,
+          sortBy: [[MediaLibrary.SortBy.creationTime, false] as any],
+          mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+        });
+
+        for (const asset of page.assets) {
+          try {
+            const normalizedCreationTime = normalizeTimestamp(asset.creationTime);
+            const result = await uploadAsset({
+              ...asset,
+              creationTime: normalizedCreationTime,
+              normalizedCreationTime,
+            });
+            if (result.success && !result.skipped) {
+              setBackedUpCount(prev => prev + 1);
+            }
+          } catch (e) {
+            console.error('Individual asset backup failed:', asset.id, e);
           }
-        } catch (e) {
-          console.error('Individual asset backup failed:', asset.id, e);
         }
+
+        after = page.endCursor || undefined;
+        hasNextPage = page.hasNextPage;
       }
     } finally {
       setIsBackingUp(false);
       fetchSyncStats();
+      refreshMedia();
     }
-  }, [isBackingUp, sections, uploadAsset, refreshMedia, fetchSyncStats]);
+  }, [isBackingUp, uploadAsset, refreshMedia, fetchSyncStats]);
 
   const deepScanDevice = useCallback(async () => {
     try {
@@ -89,7 +110,7 @@ export function useBackup() {
         for (let i = 0; i < total; i++) {
           const hash = data.hashes[i];
           console.log('Restoring hash:', hash);
-          await dbService.recordUpload(null as any, hash, 1, 'Restored from Telegram');
+          await dbService.recordUpload(null, hash, 1, 'Restored from Telegram');
           console.log('Stored hash:', hash);
           setRestoreProgress(((i + 1) / total) * 100);
           setRestoreStatus(`Restored ${i + 1} / ${total}`);
@@ -126,6 +147,6 @@ export function useBackup() {
     backedUpCount,
     syncedCount,
     successCount,
-    totalMediaCount: sections.flatMap(s => s.data).length
+    totalMediaCount: totalCount
   };
 }

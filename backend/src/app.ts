@@ -9,9 +9,15 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: BACKEND_CONSTANTS.SERVER.BODY_LIMIT }));
 
-// Global logger
-app.use((req, _res, next) => {
-    console.log(`[Backend] ${req.method} ${req.url}`);
+// Global logger with lifecycle tracking
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        const duration = Date.now() - start;
+        const status = res.statusCode;
+        const color = status >= 400 ? '🔴' : (status >= 300 ? '🟡' : '🟢');
+        console.log(`${color} [Backend] ${req.method} ${req.originalUrl || req.url} ${status} (${duration}ms)`);
+    });
     next();
 });
 

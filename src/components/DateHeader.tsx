@@ -1,44 +1,68 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Check, Circle } from 'lucide-react-native';
 import { THEME } from '../theme/theme';
 
 interface DateHeaderProps {
   title: string;
-  onSelect?: () => void;
+  onAction?: () => void;
+  completed?: boolean;
 }
 
-export const DateHeader = ({ title, onSelect }: DateHeaderProps) => {
+export const DateHeader = ({ title, onAction, completed = false }: DateHeaderProps) => {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{title}</Text>
-      {onSelect && (
-        <TouchableOpacity onPress={onSelect} activeOpacity={0.7}>
-          <Text style={styles.selectText}>Select</Text>
+      {onAction ? (
+        <TouchableOpacity style={styles.button} onPress={onAction} activeOpacity={0.85}>
+          {completed ? (
+            <View style={[styles.circleButton, styles.circleButtonActive]}>
+              <Check size={14} color={THEME.colors.white} />
+            </View>
+          ) : (
+            <View style={styles.circleButton}>
+              <Circle size={14} color={THEME.colors.primaryStrong} />
+            </View>
+          )}
         </TouchableOpacity>
-      )}
+      ) : null}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: THEME.colors.background,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    marginTop: THEME.spacing.sm,
+    marginBottom: THEME.spacing.xs,
+    paddingHorizontal: THEME.spacing.lg,
+    paddingVertical: THEME.spacing.xs,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    borderBottomWidth: 0.5,
-    borderBottomColor: THEME.colors.border,
+    justifyContent: 'space-between',
+    backgroundColor: THEME.colors.background,
   },
   title: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: THEME.colors.text, 
+    ...THEME.typography.titleSmall,
+    color: THEME.colors.text,
+    flex: 1,
   },
-  selectText: {
-    fontSize: 13,
-    color: THEME.colors.primary,
-    fontWeight: '600',
+  button: {
+    height: 28,
+    width: 28,
+    borderRadius: THEME.borderRadius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: THEME.spacing.sm,
+  },
+  circleButton: {
+    width: 22,
+    height: 22,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.surfaceTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  circleButtonActive: {
+    backgroundColor: THEME.colors.primary,
   },
 });

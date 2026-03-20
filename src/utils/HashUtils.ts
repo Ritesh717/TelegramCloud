@@ -11,6 +11,7 @@ const SMALL_FILE_THRESHOLD = 5 * 1024 * 1024; // 5MB
  * TODO: Future - implement native chunked hashing if available.
  */
 export async function computeFileHash(fileUri: string): Promise<string> {
+  let fallbackFingerprint = fileUri;
   try {
     const fileInfo = await FileSystem.getInfoAsync(fileUri, { size: true });
     
@@ -19,6 +20,7 @@ export async function computeFileHash(fileUri: string): Promise<string> {
     }
 
     const fileSize = (fileInfo as any).size || 0;
+    fallbackFingerprint = `${fileUri}|${fileSize}|${(fileInfo as any).modificationTime || 0}`;
 
     // For large files, content hashing is too slow/memory intensive on mobile
     // A metadata fingerprint (URI + size + modTime) is extremely reliable for local deduplication
@@ -41,7 +43,9 @@ export async function computeFileHash(fileUri: string): Promise<string> {
     );
   } catch (error) {
     console.error('[HashUtils] Error computing hash:', error);
-    // Fallback to basic fingerprint if everything else fails
-    return `fp_${Date.now()}_${Math.random()}`;
+    return await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      fallbackFingerprint
+    );
   }
 }

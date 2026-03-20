@@ -1,7 +1,10 @@
+const getConfigValue = (value: string | undefined, fallback = '') => value?.trim() || fallback;
+
 export const CONFIG = {
-  API_ID: 32492071,
-  API_HASH: 'b3662af9e841c45fd4fd08fc7078cbcf',
   SESSION_STORAGE_KEY: 'tg_session',
-  BACKEND_URL: 'http://10.12.154.211:3000', // Update this based on your network
-  API_KEY: 'default_secret_key_123'         // Must match backend .env
+  BACKEND_URL: getConfigValue(
+    process.env.EXPO_PUBLIC_BACKEND_URL,
+    'http://192.168.29.222:3000'
+  ),
+  API_KEY: getConfigValue(process.env.EXPO_PUBLIC_API_KEY, ''),
 };

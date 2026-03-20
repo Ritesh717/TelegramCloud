@@ -27,11 +27,13 @@ export const APP_CONSTANTS = {
   SYNC: {
     SCAN_BATCH_SIZE: 100,
     CONCURRENCY: 3,
+    MAX_BATCH_FILES: 10,
+    LARGE_FILE_THRESHOLD: 500 * 1024 * 1024,
     RETRY_MAX_ATTEMPTS: 3,
     RETRY_DELAY: 1000,
   },
   NETWORK: {
-    DEFAULT_BACKEND_URL: 'http://10.12.154.211:3000',
+    DEFAULT_BACKEND_URL: 'http://192.168.29.222:3000',
     API_KEY_HEADER: 'x-api-key',
     API: {
       SEND_CODE: '/api/send-code',
@@ -41,13 +43,14 @@ export const APP_CONSTANTS = {
       UPLOAD: '/api/upload',
       UPLOAD_BATCH: '/api/upload-batch',
       CLOUD_MEDIA: '/api/cloud-media',
+      CLOUD_MEDIA_DOWNLOAD: '/api/cloud-media',
       RESTORE: '/api/restore',
       HEALTH: '/api/health',
     }
   },
   AUTH: {
     SESSION_STORAGE_KEY: 'tg_session',
-    DEFAULT_API_KEY: 'default_secret_key_123',
+    DEFAULT_API_KEY: '',
   },
   DATABASE: {
     NAME: 'telegram_cloud.db',

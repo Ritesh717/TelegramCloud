@@ -1,45 +1,196 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, ScrollView, Animated, StatusBar } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import * as FileSystem from 'expo-file-system';
+import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Cloud,
+  Database,
+  Eraser,
+  HardDrive,
+  RefreshCw,
+  ShieldCheck,
+  Smartphone,
+} from 'lucide-react-native';
+
+import { dbService } from '../../src/api/Database';
+import { AppHeader } from '../../src/components/AppHeader';
 import { ModernAlert } from '../../src/components/ModernAlert';
+import { APP_CONSTANTS } from '../../src/constants/AppConstants';
 import { useBackup } from '../../src/hooks/useBackup';
-import { Cloud, CheckCircle2, AlertCircle, PlayCircle, Loader2, Database, ShieldCheck, RefreshCw, Smartphone } from 'lucide-react-native';
-import { Stack } from 'expo-router';
+import { CLOUD_MEDIA_CACHE_DIR } from '../../src/hooks/useCloudMedia';
+import { THEME } from '../../src/theme/theme';
+import { formatFileSize } from '../../src/utils/formatters';
+
+interface StorageSummary {
+  cacheBytes: number;
+  cacheFiles: number;
+  databaseBytes: number;
+  uploadedCount: number;
+  indexedCount: number;
+  queuedCount: number;
+}
+
+const EMPTY_STORAGE_SUMMARY: StorageSummary = {
+  cacheBytes: 0,
+  cacheFiles: 0,
+  databaseBytes: 0,
+  uploadedCount: 0,
+  indexedCount: 0,
+  queuedCount: 0,
+};
+
+const SQLITE_DIR = `${FileSystem.documentDirectory}SQLite/`;
+
+async function getDirectoryStats(directory: string): Promise<{ bytes: number; files: number }> {
+  try {
+    const info = await FileSystem.getInfoAsync(directory);
+    if (!info.exists || !info.isDirectory) {
+      return { bytes: 0, files: 0 };
+    }
+
+    const entries = await FileSystem.readDirectoryAsync(directory);
+    let bytes = 0;
+    let files = 0;
+
+    for (const entry of entries) {
+      const entryPath = `${directory}${entry}`;
+      const entryInfo = await FileSystem.getInfoAsync(entryPath);
+      if (!entryInfo.exists) continue;
+
+      if (entryInfo.isDirectory) {
+        const nested = await getDirectoryStats(`${entryPath}/`);
+        bytes += nested.bytes;
+        files += nested.files;
+      } else {
+        bytes += entryInfo.size ?? 0;
+        files += 1;
+      }
+    }
+
+    return { bytes, files };
+  } catch {
+    return { bytes: 0, files: 0 };
+  }
+}
+
+async function getDatabaseBytes() {
+  const candidates = [
+    `${SQLITE_DIR}${APP_CONSTANTS.DATABASE.NAME}`,
+    `${SQLITE_DIR}${APP_CONSTANTS.DATABASE.NAME}-wal`,
+    `${SQLITE_DIR}${APP_CONSTANTS.DATABASE.NAME}-shm`,
+    `${SQLITE_DIR}${APP_CONSTANTS.DATABASE.NAME}.db`,
+    `${SQLITE_DIR}${APP_CONSTANTS.DATABASE.NAME}.db-wal`,
+    `${SQLITE_DIR}${APP_CONSTANTS.DATABASE.NAME}.db-shm`,
+  ];
+
+  let total = 0;
+  for (const candidate of candidates) {
+    try {
+      const info = await FileSystem.getInfoAsync(candidate);
+      if (info.exists && !info.isDirectory) {
+        total += info.size ?? 0;
+      }
+    } catch {
+      // Ignore missing variants.
+    }
+  }
+
+  return total;
+}
 
 export default function BackupScreen() {
-  const { 
-    startBackup, deepScanDevice, restoreFromCloud, wipeDatabase,
-    isBackingUp, isRestoring, isScanning,
-    restoreProgress, restoreStatus,
-    scanProgress, scanStatus,
-    uploadingId, progress, backedUpCount, syncedCount, successCount, totalMediaCount 
+  const {
+    startBackup,
+    deepScanDevice,
+    restoreFromCloud,
+    wipeDatabase,
+    isBackingUp,
+    isRestoring,
+    isScanning,
+    restoreProgress,
+    restoreStatus,
+    scanProgress,
+    scanStatus,
+    progress,
+    syncedCount,
+    successCount,
+    totalMediaCount,
   } = useBackup();
+
   const [isScanAlertVisible, setIsScanAlertVisible] = useState(false);
   const [isRestoreAlertVisible, setIsRestoreAlertVisible] = useState(false);
   const [isWipeAlertVisible, setIsWipeAlertVisible] = useState(false);
+  const [isClearCacheAlertVisible, setIsClearCacheAlertVisible] = useState(false);
+  const [storageSummary, setStorageSummary] = useState<StorageSummary>(EMPTY_STORAGE_SUMMARY);
+  const [isStorageLoading, setIsStorageLoading] = useState(false);
+
+  const fullySynced = successCount === totalMediaCount && totalMediaCount > 0;
+
+  const loadStorageSummary = useCallback(async () => {
+    setIsStorageLoading(true);
+    try {
+      const [{ bytes: cacheBytes, files: cacheFiles }, databaseBytes, localSummary] = await Promise.all([
+        getDirectoryStats(CLOUD_MEDIA_CACHE_DIR),
+        getDatabaseBytes(),
+        dbService.getLocalDataSummary(),
+      ]);
+
+      setStorageSummary({
+        cacheBytes,
+        cacheFiles,
+        databaseBytes,
+        uploadedCount: localSummary.uploadedCount,
+        indexedCount: localSummary.indexedCount,
+        queuedCount: localSummary.queuedCount,
+      });
+    } finally {
+      setIsStorageLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStorageSummary();
+  }, [loadStorageSummary]);
+
+  const clearPreviewCache = useCallback(async () => {
+    await FileSystem.deleteAsync(CLOUD_MEDIA_CACHE_DIR, { idempotent: true }).catch(() => {});
+    await FileSystem.makeDirectoryAsync(CLOUD_MEDIA_CACHE_DIR, { intermediates: true }).catch(() => {});
+    await dbService.clearCachedMediaReferences();
+    await loadStorageSummary();
+  }, [loadStorageSummary]);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{paddingBottom: 40}}>
-      <StatusBar barStyle="light-content" />
-      
-      <ModernAlert 
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <StatusBar barStyle="dark-content" />
+
+      <ModernAlert
         visible={isScanAlertVisible || !!scanProgress}
-        title="Deep Scan"
-        message={scanProgress !== undefined ? "Scanning your device for previously uploaded files..." : "This will calculate file hashes to verify upload status. It may take some time. Continue?"}
+        title="Deep scan device"
+        message={
+          scanProgress !== undefined
+            ? 'Scanning your device for previously uploaded files...'
+            : 'This verifies the local index against your device library and catches anything already backed up.'
+        }
         onCancel={!isScanning ? () => setIsScanAlertVisible(false) : undefined}
         onConfirm={() => {
           setIsScanAlertVisible(false);
           deepScanDevice();
         }}
-        confirmText="Scan"
+        confirmText="Run scan"
         progress={scanProgress}
         statusText={scanStatus}
         loading={isScanning && scanProgress === undefined}
       />
 
-      <ModernAlert 
+      <ModernAlert
         visible={isRestoreAlertVisible || isRestoring}
-        title="Restore from Cloud"
-        message={isRestoring ? "Rebuilding local database from cloud metadata..." : "This will scan your Telegram history and rebuild the local database. Continue?"}
+        title="Restore from cloud"
+        message={
+          isRestoring
+            ? 'Rebuilding your local library index from cloud metadata...'
+            : 'This scans your cloud archive and restores the metadata needed for a fast local library.'
+        }
         onCancel={!isRestoring ? () => setIsRestoreAlertVisible(false) : undefined}
         onConfirm={() => {
           setIsRestoreAlertVisible(false);
@@ -51,314 +202,452 @@ export default function BackupScreen() {
         loading={isRestoring && restoreProgress === undefined}
       />
 
-      <ModernAlert 
+      <ModernAlert
         visible={isWipeAlertVisible}
-        title="Wipe Sync History?"
-        message="This will clear all local records of synced files. It will NOT delete files from your device or Telegram, but the app will think NO files have been backed up yet. Continue?"
+        title="Wipe local history?"
+        message="This clears local sync records only. Your device files and cloud uploads will stay intact."
         onCancel={() => setIsWipeAlertVisible(false)}
-        onConfirm={() => {
+        onConfirm={async () => {
           setIsWipeAlertVisible(false);
-          wipeDatabase();
+          await wipeDatabase();
+          await loadStorageSummary();
         }}
-        confirmText="Wipe All"
-        cancelText="Keep Data"
+        confirmText="Wipe local data"
+        cancelText="Keep data"
       />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Library</Text>
-      </View>
-      
-      {/* Dynamic Sync Status Card */}
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={[styles.statusIcon, { backgroundColor: successCount === totalMediaCount && totalMediaCount > 0 ? '#1e8e3e' : '#3c4043' }]}>
-            {successCount === totalMediaCount && totalMediaCount > 0 ? (
-              <CheckCircle2 size={24} color="#fff" />
+      <ModernAlert
+        visible={isClearCacheAlertVisible}
+        title="Clear preview cache?"
+        message="This removes temporary preview files from the app cache. Your cloud archive and saved device files will stay intact."
+        onCancel={() => setIsClearCacheAlertVisible(false)}
+        onConfirm={async () => {
+          setIsClearCacheAlertVisible(false);
+          await clearPreviewCache();
+        }}
+        confirmText="Clear cache"
+        cancelText="Keep cache"
+      />
+
+      <AppHeader
+        eyebrow="Backup health"
+        title="Backup center"
+        subtitle="Check your backup status, scan your device library, restore local records, and manage app storage."
+      />
+
+      <View style={styles.heroCard}>
+        <View style={styles.heroHeader}>
+          <View style={[styles.heroIcon, { backgroundColor: fullySynced ? '#D7F8E3' : '#D3E3FD' }]}>
+            {fullySynced ? (
+              <CheckCircle2 size={26} color={THEME.colors.success} />
             ) : (
-              <Cloud size={24} color="#8ab4f8" />
+              <Cloud size={26} color={THEME.colors.primary} />
             )}
           </View>
-          <View style={styles.headerText}>
-            <Text style={styles.cardTitle}>
-              {successCount === totalMediaCount && totalMediaCount > 0 ? 'Fully Synced' : 'Sync Status'}
-            </Text>
-            <Text style={styles.cardSubtitle}>
-              {successCount} items in Telegram Cloud
-            </Text>
-            {syncedCount > successCount && (
-              <Text style={styles.mappedLabel}>
-                +{syncedCount - successCount} items mapped locally
-              </Text>
-            )}
+          <View style={styles.heroText}>
+            <Text style={styles.heroTitle}>{fullySynced ? 'All items backed up' : 'Backup in progress'}</Text>
+            <Text style={styles.heroSubtitle}>{successCount} cloud items indexed locally</Text>
           </View>
         </View>
 
-        {successCount < totalMediaCount && (
-           <View style={styles.miniProgressBarBg}>
-              <View style={[styles.miniProgressBarFill, { width: `${(successCount / (totalMediaCount || 1)) * 100}%` }]} />
-           </View>
-        )}
-        
-        <View style={styles.separator} />
-        
-        {isBackingUp ? (
-          <View style={styles.progressContainer}>
-            <View style={styles.progressRow}>
-              <Text style={styles.statusLabel}>Uploading...</Text>
-              <Text style={styles.progressPercent}>{Math.round(progress)}%</Text>
-            </View>
-            <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
-            </View>
-          </View>
-        ) : (
-          <View style={styles.readyContainer}>
-            <ShieldCheck size={32} color="#81c995" />
-            <Text style={styles.readyTitle}>
-              {successCount === totalMediaCount && totalMediaCount > 0 ? 'Your library is secure' : `${totalMediaCount - successCount} items pending`}
-            </Text>
-          </View>
-        )}
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${((successCount || 0) / (totalMediaCount || 1)) * 100}%` }]} />
+        </View>
 
-        <TouchableOpacity 
-          style={[styles.button, isBackingUp && styles.buttonDisabled]} 
-          onPress={startBackup}
-          disabled={isBackingUp}
-        >
-          <Text style={styles.buttonText}>
-            {isBackingUp ? 'Syncing...' : 'Back up now'}
+        <View style={styles.metricsRow}>
+          <Metric label="Cloud" value={successCount} />
+          <Metric label="Tracked" value={syncedCount} />
+          <Metric label="Total" value={totalMediaCount} />
+        </View>
+
+        <View style={styles.heroStatus}>
+          <ShieldCheck size={18} color={THEME.colors.accent} />
+          <Text style={styles.heroStatusText}>
+            {isBackingUp
+              ? `Backing up now | ${Math.round(progress)}%`
+              : fullySynced
+                ? 'Everything is protected and indexed.'
+                : `${Math.max(totalMediaCount - successCount, 0)} items still need backup.`}
           </Text>
+        </View>
+
+        <TouchableOpacity style={styles.primaryButton} onPress={startBackup} disabled={isBackingUp} activeOpacity={0.9}>
+          <Text style={styles.primaryButtonText}>{isBackingUp ? 'Backing up...' : 'Back up now'}</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Maintenance Actions */}
-      <View style={styles.maintenanceSection}>
-          <Text style={styles.sectionTitle}>Maintenance Tools</Text>
-          
-          <TouchableOpacity 
-            style={styles.maintenanceItem} 
-            onPress={() => setIsScanAlertVisible(true)} 
-            disabled={isBackingUp || isScanning || isRestoring}
-          >
-             <Smartphone size={20} color="#8ab4f8" />
-             <View style={styles.itemText}>
-                 <Text style={styles.itemTitle}>Deep Scan Device</Text>
-                 <Text style={styles.itemSubtitle}>Verify local database integrity</Text>
-             </View>
-             <RefreshCw size={16} color="#5f6368" />
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.maintenanceItem} 
-            onPress={() => setIsRestoreAlertVisible(true)} 
-            disabled={isBackingUp || isScanning || isRestoring}
-          >
-             <Database size={20} color="#8ab4f8" />
-             <View style={styles.itemText}>
-                 <Text style={styles.itemTitle}>Restore from Cloud</Text>
-                 <Text style={styles.itemSubtitle}>Pull metadata from Telegram</Text>
-             </View>
-             <RefreshCw size={16} color="#5f6368" />
-          </TouchableOpacity>
+      <View style={styles.chipRow}>
+        <View style={styles.infoChip}>
+          <RefreshCw size={14} color={THEME.colors.primaryStrong} />
+          <Text style={styles.infoChipText}>Index restore</Text>
+        </View>
+        <View style={styles.infoChip}>
+          <Smartphone size={14} color={THEME.colors.primaryStrong} />
+          <Text style={styles.infoChipText}>Device scan</Text>
+        </View>
+        <View style={styles.infoChip}>
+          <HardDrive size={14} color={THEME.colors.primaryStrong} />
+          <Text style={styles.infoChipText}>Local storage</Text>
+        </View>
       </View>
 
-      {/* Danger Zone */}
-      <View style={styles.maintenanceSection}>
-          <Text style={[styles.sectionTitle, { color: '#f28b82' }]}>Danger Zone</Text>
-          
-          <TouchableOpacity 
-            style={styles.maintenanceItem} 
-            onPress={() => setIsWipeAlertVisible(true)} 
-            disabled={isBackingUp || isScanning || isRestoring}
-          >
-             <AlertCircle size={20} color="#f28b82" />
-             <View style={styles.itemText}>
-                 <Text style={[styles.itemTitle, { color: '#f28b82' }]}>Wipe Local History</Text>
-                 <Text style={styles.itemSubtitle}>Start fresh (doesn't delete files)</Text>
-             </View>
-          </TouchableOpacity>
+      <Text style={styles.sectionTitle}>Local storage</Text>
+      <View style={styles.storageRow}>
+        <StorageCard
+          icon={<Cloud size={18} color={THEME.colors.primary} />}
+          label="Preview cache"
+          value={formatFileSize(storageSummary.cacheBytes)}
+          helper={`${storageSummary.cacheFiles} cached files`}
+          loading={isStorageLoading}
+        />
+        <StorageCard
+          icon={<Database size={18} color={THEME.colors.primary} />}
+          label="Stored data"
+          value={formatFileSize(storageSummary.databaseBytes)}
+          helper={`${storageSummary.indexedCount} indexed items`}
+          loading={isStorageLoading}
+        />
       </View>
+
+      <View style={styles.storageMetricsRow}>
+        <Metric label="Indexed" value={storageSummary.indexedCount} />
+        <Metric label="Uploads" value={storageSummary.uploadedCount} />
+        <Metric label="Queue" value={storageSummary.queuedCount} />
+      </View>
+
+      <ActionCard
+        icon={<Eraser size={20} color={THEME.colors.primary} />}
+        title="Clear preview cache"
+        subtitle="Remove temporary preview files to reduce heavy loading and free app storage."
+        action="Clear"
+        onPress={() => setIsClearCacheAlertVisible(true)}
+      />
+
+      <Text style={styles.sectionTitle}>Maintenance</Text>
+      <ActionCard
+        icon={<Smartphone size={20} color={THEME.colors.primary} />}
+        title="Deep scan device"
+        subtitle="Verify local records against your full device library."
+        action="Scan"
+        onPress={() => setIsScanAlertVisible(true)}
+      />
+      <ActionCard
+        icon={<Database size={20} color={THEME.colors.primary} />}
+        title="Restore from cloud"
+        subtitle="Rebuild the local index from cloud metadata."
+        action="Restore"
+        onPress={() => setIsRestoreAlertVisible(true)}
+      />
+      <ActionCard
+        icon={<AlertCircle size={20} color={THEME.colors.error} />}
+        title="Wipe local history"
+        subtitle="Reset local sync knowledge without touching cloud files."
+        action="Wipe"
+        onPress={() => setIsWipeAlertVisible(true)}
+        destructive
+      />
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>Telegram Cloud • Unlimited Storage</Text>
-        <Text style={styles.footerText}>Status: Secure Tunnel Active</Text>
+        <Text style={styles.footerText}>
+          Manage your backup status, local cache, device scan, and restore tools from one place.
+        </Text>
       </View>
     </ScrollView>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function StorageCard({
+  icon,
+  label,
+  value,
+  helper,
+  loading,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  helper: string;
+  loading?: boolean;
+}) {
+  return (
+    <View style={styles.storageCard}>
+      <View style={styles.storageIcon}>{icon}</View>
+      <Text style={styles.storageLabel}>{label}</Text>
+      <Text style={styles.storageValue}>{loading ? 'Loading...' : value}</Text>
+      <Text style={styles.storageHelper}>{loading ? 'Checking local files...' : helper}</Text>
+    </View>
+  );
+}
+
+function ActionCard({
+  icon,
+  title,
+  subtitle,
+  action,
+  onPress,
+  destructive = false,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  action: string;
+  onPress: () => void;
+  destructive?: boolean;
+}) {
+  return (
+    <TouchableOpacity style={styles.actionCard} onPress={onPress} activeOpacity={0.88}>
+      <View style={styles.actionIcon}>{icon}</View>
+      <View style={styles.actionBody}>
+        <Text style={[styles.actionTitle, destructive && { color: THEME.colors.error }]}>{title}</Text>
+        <Text style={styles.actionSubtitle}>{subtitle}</Text>
+      </View>
+      <View style={[styles.actionPill, destructive && styles.actionPillDanger]}>
+        <Text style={[styles.actionPillText, destructive && styles.actionPillDangerText]}>{action}</Text>
+      </View>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: THEME.colors.background,
   },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 10,
+  content: {
+    paddingBottom: 120,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#e8eaed',
-  },
-  card: {
-    margin: 20,
-    padding: 24,
-    backgroundColor: '#121212',
-    borderRadius: 28,
+  heroCard: {
+    marginHorizontal: THEME.spacing.md,
+    padding: THEME.spacing.md,
+    borderRadius: THEME.borderRadius.xl,
+    backgroundColor: THEME.colors.surface,
     borderWidth: 1,
-    borderColor: '#202124',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    borderColor: THEME.colors.borderSoft,
+    ...THEME.shadow.soft,
   },
-  cardHeader: {
+  heroHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
   },
-  statusIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
+  heroIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: THEME.borderRadius.full,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerText: {
-    marginLeft: 16,
+  heroText: {
+    marginLeft: THEME.spacing.md,
     flex: 1,
   },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#e8eaed',
+  heroTitle: {
+    ...THEME.typography.titleSmall,
+    color: THEME.colors.text,
   },
-  cardSubtitle: {
-    fontSize: 14,
-    color: '#9aa0a6',
+  heroSubtitle: {
+    ...THEME.typography.body,
+    color: THEME.colors.textSecondary,
+    marginTop: 4,
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.surfaceSecondary,
+    marginTop: THEME.spacing.md,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.primary,
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    marginTop: THEME.spacing.md,
+  },
+  metric: {
+    flex: 1,
+  },
+  metricValue: {
+    ...THEME.typography.title,
+    color: THEME.colors.text,
+  },
+  metricLabel: {
+    ...THEME.typography.label,
+    color: THEME.colors.textSecondary,
     marginTop: 2,
   },
-  mappedLabel: {
-    fontSize: 12,
-    color: '#8ab4f8',
-    marginTop: 4,
-    fontWeight: '500',
-  },
-  miniProgressBarBg: {
-    height: 4,
-    backgroundColor: '#202124',
-    borderRadius: 2,
-    overflow: 'hidden',
-    marginBottom: 20,
-  },
-  miniProgressBarFill: {
-    height: '100%',
-    backgroundColor: '#1e8e3e',
-  },
-  separator: {
-    height: 1,
-    backgroundColor: '#202124',
-    marginBottom: 24,
-  },
-  readyContainer: {
-    alignItems: 'center',
-    marginBottom: 32,
-  },
-  readyTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#e8eaed',
-    marginTop: 16,
-  },
-  progressContainer: {
-    width: '100%',
-    marginBottom: 32,
-  },
-  progressRow: {
+  heroStatus: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  statusLabel: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#e8eaed',
-  },
-  progressPercent: {
-    fontSize: 14,
-    color: '#8ab4f8',
-    fontWeight: 'bold',
-  },
-  progressBarBg: {
-    height: 6,
-    backgroundColor: '#202124',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#8ab4f8',
-  },
-  button: {
-    backgroundColor: '#8ab4f8',
-    paddingVertical: 16,
-    borderRadius: 32,
     alignItems: 'center',
+    marginTop: THEME.spacing.md,
   },
-  buttonDisabled: {
-    opacity: 0.4,
+  heroStatusText: {
+    ...THEME.typography.bodyMedium,
+    color: THEME.colors.textSecondary,
+    marginLeft: THEME.spacing.sm,
+    flex: 1,
   },
-  buttonText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '700',
+  primaryButton: {
+    marginTop: THEME.spacing.md,
+    height: 50,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  maintenanceSection: {
-    marginTop: 32,
-    paddingHorizontal: 20,
+  primaryButtonText: {
+    ...THEME.typography.bodyMedium,
+    color: THEME.colors.white,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: THEME.spacing.md,
+    marginTop: THEME.spacing.md,
+    marginBottom: THEME.spacing.sm,
+  },
+  infoChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 36,
+    paddingHorizontal: THEME.spacing.md,
+    marginRight: THEME.spacing.sm,
+    marginBottom: THEME.spacing.sm,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.surfaceTertiary,
+  },
+  infoChipText: {
+    ...THEME.typography.label,
+    color: THEME.colors.primaryStrong,
+    marginLeft: 6,
   },
   sectionTitle: {
-    color: '#bdc1c6',
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 16,
+    ...THEME.typography.label,
+    color: THEME.colors.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    marginTop: THEME.spacing.xl,
+    marginBottom: THEME.spacing.sm,
+    marginHorizontal: THEME.spacing.md,
   },
-  maintenanceItem: {
+  storageRow: {
+    flexDirection: 'row',
+    paddingHorizontal: THEME.spacing.md,
+    marginBottom: THEME.spacing.sm,
+  },
+  storageCard: {
+    flex: 1,
+    minHeight: 136,
+    marginRight: THEME.spacing.sm,
+    padding: THEME.spacing.md,
+    borderRadius: THEME.borderRadius.lg,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.borderSoft,
+    ...THEME.shadow.card,
+  },
+  storageIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.surfaceSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: THEME.spacing.sm,
+  },
+  storageLabel: {
+    ...THEME.typography.label,
+    color: THEME.colors.textSecondary,
+  },
+  storageValue: {
+    ...THEME.typography.titleSmall,
+    color: THEME.colors.text,
+    marginTop: 6,
+  },
+  storageHelper: {
+    ...THEME.typography.label,
+    color: THEME.colors.textMuted,
+    marginTop: 6,
+  },
+  storageMetricsRow: {
+    flexDirection: 'row',
+    marginHorizontal: THEME.spacing.md,
+    marginBottom: THEME.spacing.sm,
+    padding: THEME.spacing.md,
+    borderRadius: THEME.borderRadius.lg,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.borderSoft,
+  },
+  actionCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: '#121212',
+    marginHorizontal: THEME.spacing.md,
+    marginBottom: THEME.spacing.sm,
+    padding: THEME.spacing.md,
+    borderRadius: THEME.borderRadius.lg,
+    backgroundColor: THEME.colors.surface,
+    borderWidth: 1,
+    borderColor: THEME.colors.borderSoft,
+    ...THEME.shadow.card,
   },
-  itemText: {
-    marginLeft: 20,
+  actionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.surfaceSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionBody: {
     flex: 1,
+    marginLeft: THEME.spacing.md,
   },
-  itemTitle: {
-    color: '#e8eaed',
-    fontSize: 16,
-    fontWeight: '500',
+  actionTitle: {
+    ...THEME.typography.bodyMedium,
+    color: THEME.colors.text,
   },
-  itemSubtitle: {
-    color: '#9aa0a6',
-    fontSize: 13,
-    marginTop: 2,
+  actionSubtitle: {
+    ...THEME.typography.label,
+    color: THEME.colors.textSecondary,
+    marginTop: 4,
+  },
+  actionPill: {
+    minWidth: 78,
+    height: 36,
+    paddingHorizontal: THEME.spacing.md,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: THEME.colors.surfaceTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionPillDanger: {
+    backgroundColor: '#FCE8E6',
+  },
+  actionPillText: {
+    ...THEME.typography.bodyMedium,
+    color: THEME.colors.primaryStrong,
+  },
+  actionPillDangerText: {
+    color: THEME.colors.error,
   },
   footer: {
-    marginTop: 48,
-    padding: 24,
     alignItems: 'center',
+    marginTop: THEME.spacing.xl,
+    paddingHorizontal: THEME.spacing.xl,
   },
   footerText: {
-    fontSize: 12,
-    color: '#5f6368',
-    marginBottom: 6,
-    fontWeight: '500',
+    ...THEME.typography.label,
+    color: THEME.colors.textMuted,
+    textAlign: 'center',
   },
 });

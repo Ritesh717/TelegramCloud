@@ -1,14 +1,19 @@
+import * as FileSystem from 'expo-file-system';
 import { CONFIG } from '../constants/Config';
 import { APP_CONSTANTS } from '../constants/AppConstants';
-import * as FileSystem from 'expo-file-system';
 
-/**
- * Refactored TelegramService that proxies calls to the Node.js backend.
- * This avoids MTProto/Stream issues in React Native.
- */
 class TelegramService {
   private getBaseUrl() {
     return CONFIG.BACKEND_URL || APP_CONSTANTS.NETWORK.DEFAULT_BACKEND_URL;
+  }
+
+  private getAuthHeaders(extraHeaders: Record<string, string> = {}) {
+    return CONFIG.API_KEY
+      ? {
+          ...extraHeaders,
+          [APP_CONSTANTS.NETWORK.API_KEY_HEADER]: CONFIG.API_KEY,
+        }
+      : extraHeaders;
   }
 
   async initialize() {
@@ -18,13 +23,12 @@ class TelegramService {
   async sendCode(phoneNumber: string): Promise<any> {
     const response = await fetch(`${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.SEND_CODE}`, {
       method: 'POST',
-      headers: { 
+      headers: this.getAuthHeaders({
         'Content-Type': 'application/json',
-        [APP_CONSTANTS.NETWORK.API_KEY_HEADER]: CONFIG.API_KEY
-      },
+      }),
       body: JSON.stringify({ phoneNumber }),
     });
-    
+
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.error || APP_CONSTANTS.ERRORS.DEFAULT_FETCH);
@@ -35,10 +39,9 @@ class TelegramService {
   async signIn(phoneNumber: string, phoneCodeHash: string, code: string): Promise<any> {
     const response = await fetch(`${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.SIGN_IN}`, {
       method: 'POST',
-      headers: { 
+      headers: this.getAuthHeaders({
         'Content-Type': 'application/json',
-        [APP_CONSTANTS.NETWORK.API_KEY_HEADER]: CONFIG.API_KEY
-      },
+      }),
       body: JSON.stringify({ phoneNumber, phoneCodeHash, code }),
     });
 
@@ -52,10 +55,9 @@ class TelegramService {
   async checkPassword(password: string): Promise<any> {
     const response = await fetch(`${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.CHECK_PASSWORD}`, {
       method: 'POST',
-      headers: { 
+      headers: this.getAuthHeaders({
         'Content-Type': 'application/json',
-        [APP_CONSTANTS.NETWORK.API_KEY_HEADER]: CONFIG.API_KEY
-      },
+      }),
       body: JSON.stringify({ password }),
     });
 
@@ -68,12 +70,17 @@ class TelegramService {
 
   async isAuthenticated(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.AUTH_STATUS}`, {
-        headers: { [APP_CONSTANTS.NETWORK.API_KEY_HEADER]: CONFIG.API_KEY }
+      const url = `${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.AUTH_STATUS}`;
+      console.log("Validating Authentication ,URL: ", url);
+      const response = await fetch(url, {
+        headers: this.getAuthHeaders(),
       });
+      // console.log("Response: ", response);
       const data = await response.json();
+      console.log("Data: ", data);
       return !!data.authorized;
     } catch (e) {
+      console.log("Error: ", e);
       console.error('[TelegramClient] Failed to check auth status:', e);
       return false;
     }
@@ -93,9 +100,7 @@ class TelegramService {
     const response = await FileSystem.uploadAsync(url, uri, {
       httpMethod: 'POST',
       uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-      headers: {
-        [APP_CONSTANTS.NETWORK.API_KEY_HEADER]: CONFIG.API_KEY,
-      },
+      headers: this.getAuthHeaders(),
     });
 
     if (response.status !== 200) {
@@ -105,33 +110,67 @@ class TelegramService {
     return JSON.parse(response.body);
   }
 
-  async uploadBatch(assets: { uri: string, filename: string, hash: string }[]) {
+  async uploadBatch(assets: { uri: string; filename: string; hash: string }[]) {
     const url = `${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.UPLOAD_BATCH}`;
-    
     const formData = new FormData();
+
+    const manifest = assets.map((asset) => ({
+      filename: asset.filename,
+      hash: asset.hash,
+      fileSize: (asset as any).fileSize || 0,
+      metadata: (asset as any).metadata || {},
+    }));
+
+    formData.append('manifest', JSON.stringify(manifest));
+
     for (const asset of assets) {
       formData.append('files', {
         uri: asset.uri,
         name: asset.filename,
-        type: 'application/octet-stream'
+        type: 'application/octet-stream',
       } as any);
-      formData.append('hashes', asset.hash);
     }
 
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
-      headers: {
-        [APP_CONSTANTS.NETWORK.API_KEY_HEADER]: CONFIG.API_KEY,
-      },
+      headers: this.getAuthHeaders(),
     });
 
     if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Batch upload failed: ${text}`);
+      const text = await response.text();
+      throw new Error(`Batch upload failed: ${text}`);
     }
 
-    return await response.json();
+    return response.json();
+  }
+
+  async fetchCloudMedia(limit = 100) {
+    const response = await fetch(
+      `${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.CLOUD_MEDIA}?limit=${limit}`,
+      {
+        headers: this.getAuthHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch cloud media');
+    }
+
+    return response.json();
+  }
+
+  async downloadCloudMedia(messageId: number, destinationUri: string) {
+    const url = `${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.CLOUD_MEDIA_DOWNLOAD}/${messageId}/download`;
+    const response = await FileSystem.downloadAsync(url, destinationUri, {
+      headers: this.getAuthHeaders(),
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`Download failed with status ${response.status}`);
+    }
+
+    return response.uri;
   }
 
   async logout() {

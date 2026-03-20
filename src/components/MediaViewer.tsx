@@ -1,15 +1,31 @@
-import React, { useState, useRef } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Modal, ActivityIndicator, Share } from 'react-native';
+import React, { useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Share,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { Image } from 'expo-image';
-import { Video, ResizeMode, Audio } from 'expo-av';
+import { ResizeMode, Video } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MediaAsset } from '../hooks/useMedia';
+import { Info, Play, Share2, Trash2, X } from 'lucide-react-native';
+
 import { THEME } from '../theme/theme';
-import { X, Share2, Trash2, Info, Play, Pause } from 'lucide-react-native';
+import { formatDate, normalizeTimestamp } from '../utils/formatters';
+
+export interface ViewerMedia {
+  uri: string;
+  filename: string;
+  mediaType: 'photo' | 'video' | 'document';
+  creationTime: number;
+}
 
 interface MediaViewerProps {
   isVisible: boolean;
-  asset: MediaAsset | null;
+  asset: ViewerMedia | null;
   onClose: () => void;
 }
 
@@ -47,30 +63,28 @@ export const MediaViewer = ({ isVisible, asset, onClose }: MediaViewerProps) => 
   return (
     <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.container}>
-        {/* Header */}
-        <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-          <TouchableOpacity onPress={onClose} style={styles.iconButton}>
-            <X color="#fff" size={24} />
+        <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
+          <TouchableOpacity style={[styles.iconButton, styles.leadingButton]} onPress={onClose} activeOpacity={0.85}>
+            <X size={22} color={THEME.colors.text} />
           </TouchableOpacity>
-          <View style={styles.headerRight}>
-             <TouchableOpacity style={styles.iconButton}><Info color="#fff" size={22} /></TouchableOpacity>
-             <TouchableOpacity style={styles.iconButton} onPress={handleShare}><Share2 color="#fff" size={22} /></TouchableOpacity>
-             <TouchableOpacity style={styles.iconButton}><Trash2 color="#fff" size={22} /></TouchableOpacity>
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.iconButton} activeOpacity={0.85}>
+              <Info size={20} color={THEME.colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconButton} onPress={handleShare} activeOpacity={0.85}>
+              <Share2 size={20} color={THEME.colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconButton} activeOpacity={0.85}>
+              <Trash2 size={20} color={THEME.colors.text} />
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Content */}
         <View style={styles.content}>
-          {loading && (
-            <ActivityIndicator size="large" color={THEME.colors.primary} style={styles.loader} />
-          )}
-          
+          {loading ? <ActivityIndicator size="large" color={THEME.colors.primary} style={styles.loader} /> : null}
+
           {isVideo ? (
-            <TouchableOpacity 
-              activeOpacity={1} 
-              style={styles.fullMedia}
-              onPress={togglePlayback}
-            >
+            <TouchableOpacity style={styles.fullMedia} activeOpacity={1} onPress={togglePlayback}>
               <Video
                 ref={videoRef}
                 source={{ uri: asset.uri }}
@@ -86,11 +100,11 @@ export const MediaViewer = ({ isVisible, asset, onClose }: MediaViewerProps) => 
                   }
                 }}
               />
-              {!isPlaying && !loading && (
-                <View style={styles.playOverlay}>
-                  <Play size={64} color="#fff" fill="rgba(255,255,255,0.4)" />
+              {!isPlaying && !loading ? (
+                <View style={styles.playBadge}>
+                  <Play size={32} color={THEME.colors.white} fill={THEME.colors.white} />
                 </View>
-              )}
+              ) : null}
             </TouchableOpacity>
           ) : (
             <Image
@@ -99,15 +113,16 @@ export const MediaViewer = ({ isVisible, asset, onClose }: MediaViewerProps) => 
               contentFit="contain"
               onLoadStart={() => setLoading(true)}
               onLoad={() => setLoading(false)}
-              transition={300}
+              transition={THEME.motion.normal}
             />
           )}
         </View>
-        
-        {/* Footer */}
-        <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
-           <Text style={styles.dateText}>{new Date(asset.creationTime).toLocaleString()}</Text>
-           <Text style={styles.metaText}>{asset.filename}</Text>
+
+        <View style={[styles.footer, { paddingBottom: insets.bottom + 18 }]}>
+          <Text style={styles.dateText}>{formatDate(normalizeTimestamp(asset.creationTime))}</Text>
+          <Text style={styles.metaText} numberOfLines={1}>
+            {asset.filename}
+          </Text>
         </View>
       </View>
     </Modal>
@@ -115,34 +130,76 @@ export const MediaViewer = ({ isVisible, asset, onClose }: MediaViewerProps) => 
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  header: {
+  container: {
+    flex: 1,
+    backgroundColor: THEME.colors.background,
+  },
+  topBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    position: 'absolute',
-    top: 0, left: 0, right: 0,
-    zIndex: 10,
-    backgroundColor: 'rgba(0,0,0,0.4)'
+    paddingHorizontal: THEME.spacing.lg,
   },
-  headerRight: { flexDirection: 'row' },
-  iconButton: { padding: 10, marginLeft: 5 },
-  content: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  fullMedia: { width: '100%', height: '100%' },
-  loader: { position: 'absolute', zIndex: 5 },
-  playOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
+  actionRow: {
+    flexDirection: 'row',
+  },
+  iconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: 'rgba(255,255,255,0.92)',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    justifyContent: 'center',
+    marginLeft: 10,
+  },
+  leadingButton: {
+    marginLeft: 0,
+  },
+  content: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fullMedia: {
+    width: '100%',
+    height: '100%',
+  },
+  loader: {
+    position: 'absolute',
+    zIndex: 2,
+  },
+  playBadge: {
+    position: 'absolute',
+    alignSelf: 'center',
+    top: '50%',
+    marginTop: -36,
+    width: 72,
+    height: 72,
+    borderRadius: THEME.borderRadius.full,
+    backgroundColor: 'rgba(32,33,36,0.42)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   footer: {
     position: 'absolute',
-    bottom: 0, left: 0, right: 0,
-    padding: 20,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center'
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: THEME.spacing.xl,
+    paddingTop: THEME.spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.92)',
   },
-  dateText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  metaText: { color: '#ccc', fontSize: 14, marginTop: 4 }
+  dateText: {
+    ...THEME.typography.bodyMedium,
+    color: THEME.colors.text,
+  },
+  metaText: {
+    ...THEME.typography.label,
+    color: THEME.colors.textSecondary,
+    marginTop: 4,
+  },
 });
