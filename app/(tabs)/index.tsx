@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -20,6 +20,7 @@ import { MediaViewer, ViewerMedia } from '../../src/components/MediaViewer';
 import { APP_CONSTANTS } from '../../src/constants/AppConstants';
 import { MediaAsset, MediaSection, useMedia } from '../../src/hooks/useMedia';
 import { useSyncQueue } from '../../src/hooks/useSyncQueue';
+import { useBackup } from '../../src/hooks/useBackup';
 import { THEME } from '../../src/theme/theme';
 import { formatSectionDate, normalizeTimestamp } from '../../src/utils/formatters';
 
@@ -58,9 +59,17 @@ const buildSectionsFromAssets = (assets: MediaAsset[]): MediaSection[] => {
     .sort((a, b) => b.timestamp - a.timestamp);
 };
 
+// eslint-disable-next-line react/display-name
+const Chip = React.memo(({ label, active = false, onPress }: { label: string; active?: boolean; onPress?: () => void }) => (
+  <TouchableOpacity style={[styles.chip, active && styles.chipActive]} onPress={onPress} activeOpacity={0.88}>
+    <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+  </TouchableOpacity>
+));
+
 export default function GalleryScreen() {
-  const { sections, assets, loadingInitial, loadingMore, loadMore, refresh } = useMedia();
+  const { sections, assets, loadingInitial, loadingMore, loadMore, refresh, totalCount } = useMedia();
   const { addToQueue, queueItems } = useSyncQueue();
+  const { successCount } = useBackup();
   const [selectedAsset, setSelectedAsset] = useState<ViewerMedia | null>(null);
   const [isViewerVisible, setIsViewerVisible] = useState(false);
   const [columnCount, setColumnCount] = useState(APP_CONSTANTS.UI.GALLERY.DEFAULT_COLUMN_COUNT);
@@ -135,7 +144,7 @@ export default function GalleryScreen() {
     [queueItems]
   );
 
-  const handleAssetPress = (asset: MediaAsset) => {
+  const handleAssetPress = useCallback((asset: MediaAsset) => {
     setSelectedAsset({
       uri: asset.uri,
       filename: asset.filename,
@@ -143,9 +152,9 @@ export default function GalleryScreen() {
       creationTime: asset.normalizedCreationTime,
     });
     setIsViewerVisible(true);
-  };
+  }, []);
 
-  const showToast = (message: string) => {
+  const showToast = useCallback((message: string) => {
     setToastMessage(message);
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current);
@@ -154,21 +163,31 @@ export default function GalleryScreen() {
       setToastMessage(null);
       toastTimeoutRef.current = null;
     }, 1000);
-  };
+  }, []);
 
-  const isAssetBackedUp = (asset: MediaAsset) => {
+  const isAssetBackedUp = useCallback((asset: MediaAsset) => {
     const queueItem = queueByAssetId.get(asset.id);
     return (
       asset.isUploaded ||
       queueItem === 'completed' ||
       queueItem === 'duplicate'
     );
-  };
+  }, [queueByAssetId]);
 
-  const isSectionBackedUp = (section: MediaSection) =>
-    section.data.every((asset) => isAssetBackedUp(asset));
+  const isSectionBackedUp = useCallback((section: MediaSection) =>
+    section.data.every((asset) => isAssetBackedUp(asset)),
+    [isAssetBackedUp]
+  );
 
-  const handleSectionBackup = (section: MediaSection) => {
+  const isSectionBackingUp = useCallback((section: MediaSection) =>
+    section.data.some((asset) => {
+      const queueStatus = queueByAssetId.get(asset.id);
+      return queueStatus === 'queued' || queueStatus === 'uploading' || queueStatus === 'retrying';
+    }),
+    [queueByAssetId]
+  );
+
+  const handleSectionBackup = useCallback((section: MediaSection) => {
     const pendingAssets = section.data.filter((asset) => !isAssetBackedUp(asset));
     if (pendingAssets.length === 0) {
       showToast('Everything in this day is already backed up');
@@ -178,7 +197,7 @@ export default function GalleryScreen() {
     addToQueue(
       pendingAssets.map((asset) => ({
         ...asset,
-        fileSize: asset.fileSize || 0,
+        fileSize: (asset as any).fileSize || 0,
       }))
     );
     dayBackupRef.current.set(section.key, {
@@ -190,8 +209,25 @@ export default function GalleryScreen() {
         ? '1 item added to backup queue'
         : `${pendingAssets.length} items added to backup queue`
     );
-  };
+  }, [addToQueue, isAssetBackedUp, showToast]);
 
+  const toggleGrid = useCallback(() => {
+    setColumnCount((prev) =>
+      prev === APP_CONSTANTS.UI.GALLERY.DEFAULT_COLUMN_COUNT
+        ? APP_CONSTANTS.UI.GALLERY.MAX_COLUMN_COUNT
+        : APP_CONSTANTS.UI.GALLERY.DEFAULT_COLUMN_COUNT
+    );
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Track when sections complete backup and show toast
   useEffect(() => {
     const completedSections: string[] = [];
 
@@ -214,65 +250,64 @@ export default function GalleryScreen() {
         }
         dayBackupRef.current.delete(sectionKey);
       });
-      refresh();
     }
-  }, [queueByAssetId, refresh]);
+  }, [queueByAssetId, showToast]);
 
-  useEffect(() => {
-    return () => {
-      if (toastTimeoutRef.current) {
-        clearTimeout(toastTimeoutRef.current);
-      }
-    };
-  }, []);
+  // Stable chip press handlers — avoid recreating on every render
+  const handleChipAll = useCallback(() => setView('all'), []);
+  const handleChipMemories = useCallback(() => setView('memories'), []);
+  const handleChipVideos = useCallback(() => setView('videos'), []);
+  const handleChipBackedUp = useCallback(() => setView('backed_up'), []);
+  const handleChipNotBackedUp = useCallback(() => setView('not_backed_up'), []);
+  const handleChipCollections = useCallback(() => setView('collections'), []);
 
-  const toggleGrid = () => {
-    setColumnCount((prev) =>
-      prev === APP_CONSTANTS.UI.GALLERY.DEFAULT_COLUMN_COUNT
-        ? APP_CONSTANTS.UI.GALLERY.MAX_COLUMN_COUNT
-        : APP_CONSTANTS.UI.GALLERY.DEFAULT_COLUMN_COUNT
+  const listHeader = useMemo(() => {
+    const titleSuffix = view === 'all' ? totalCount : filteredAssets.length;
+    return (
+      <>
+        <AppHeader
+          eyebrow="Device library"
+          title={`Photos • ${titleSuffix}`}
+          rightActions={[{ icon: LayoutGrid, onPress: toggleGrid }]}
+        />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+          <Chip label="All" active={view === 'all'} onPress={handleChipAll} />
+          <Chip label="Memories" active={view === 'memories'} onPress={handleChipMemories} />
+          <Chip label="Videos" active={view === 'videos'} onPress={handleChipVideos} />
+          <Chip label="Backed up" active={view === 'backed_up'} onPress={handleChipBackedUp} />
+          <Chip label="Not backed up" active={view === 'not_backed_up'} onPress={handleChipNotBackedUp} />
+          <Chip label="Collections" active={view === 'collections'} onPress={handleChipCollections} />
+        </ScrollView>
+
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Total item{totalCount === 1 ? '' : 's'}</Text>
+            <Text style={styles.summaryValue}>{totalCount}</Text>
+          </View>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Backed up</Text>
+            <Text style={styles.summaryValue}>{successCount}</Text>
+          </View>
+          <View style={[styles.summaryCard, styles.summaryCardLast]}>
+            <Text style={styles.summaryLabel}>Current view</Text>
+            <Text style={styles.summaryValue}>{filteredAssets.length}</Text>
+          </View>
+        </View>
+      </>
     );
-  };
-
-  const activeCount = filteredAssets.filter((asset) => asset.isUploaded).length;
-
-  const listHeader = (
-    <>
-      <AppHeader
-        eyebrow="Device library"
-        title="Photos"
-        // subtitle="Browse your device library, recent highlights, videos, and already backed up items."
-        rightActions={[{ icon: LayoutGrid, onPress: toggleGrid }]}
-      />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-        <Chip label="All" active={view === 'all'} onPress={() => setView('all')} />
-        <Chip label="Memories" active={view === 'memories'} onPress={() => setView('memories')} />
-        <Chip label="Videos" active={view === 'videos'} onPress={() => setView('videos')} />
-        <Chip label="Backed up" active={view === 'backed_up'} onPress={() => setView('backed_up')} />
-        <Chip label="Not backed up" active={view === 'not_backed_up'} onPress={() => setView('not_backed_up')} />
-        <Chip label="Collections" active={view === 'collections'} onPress={() => setView('collections')} />
-        {/* <Chip label={columnCount === 4 ? 'Comfortable grid' : 'Compact grid'} onPress={toggleGrid} /> */}
-      </ScrollView>
-
-      <View style={styles.summaryRow}>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Visible</Text>
-          <Text style={styles.summaryValue}>{filteredAssets.length}</Text>
-        </View>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Backed up</Text>
-          <Text style={styles.summaryValue}>{activeCount}</Text>
-        </View>
-        <View style={[styles.summaryCard, styles.summaryCardLast]}>
-          <Text style={styles.summaryLabel}>Videos</Text>
-          <Text style={styles.summaryValue}>
-            {filteredAssets.filter((asset) => asset.mediaType === 'video').length}
-          </Text>
-        </View>
-      </View>
-    </>
-  );
-
+  }, [
+    filteredAssets.length,
+    handleChipAll,
+    handleChipBackedUp,
+    handleChipCollections,
+    handleChipMemories,
+    handleChipNotBackedUp,
+    handleChipVideos,
+    successCount,
+    toggleGrid,
+    totalCount,
+    view,
+  ]);
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
@@ -288,6 +323,7 @@ export default function GalleryScreen() {
                   title={item.section.title}
                   onAction={() => handleSectionBackup(item.section)}
                   completed={isSectionBackedUp(item.section)}
+                  loading={isSectionBackingUp(item.section)}
                 />
               );
             }
@@ -300,6 +336,7 @@ export default function GalleryScreen() {
                     asset={asset}
                     onPress={handleAssetPress}
                     itemWidth={itemWidth}
+                    isBackedUp={isAssetBackedUp(asset)}
                   />
                 ))}
                 {item.assets.length < columnCount
@@ -338,22 +375,6 @@ export default function GalleryScreen() {
         </View>
       ) : null}
     </View>
-  );
-}
-
-function Chip({
-  label,
-  active = false,
-  onPress,
-}: {
-  label: string;
-  active?: boolean;
-  onPress?: () => void;
-}) {
-  return (
-    <TouchableOpacity style={[styles.chip, active && styles.chipActive]} onPress={onPress} activeOpacity={0.88}>
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
-    </TouchableOpacity>
   );
 }
 
@@ -482,19 +503,28 @@ const styles = StyleSheet.create({
   },
   toastWrap: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 96,
-    alignItems: 'center',
+    left: 16,
+    right: 16,
+    bottom: 10,
+    zIndex: 9999,
+    elevation: 99,
   },
   toast: {
-    paddingHorizontal: THEME.spacing.md,
-    paddingVertical: THEME.spacing.sm,
-    borderRadius: THEME.borderRadius.full,
-    backgroundColor: 'rgba(32,33,36,0.88)',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 4,
+    backgroundColor: '#323232',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.27,
+    shadowRadius: 4.65,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   toastText: {
     ...THEME.typography.bodyMedium,
-    color: THEME.colors.white,
+    color: '#FFFFFF',
   },
 });

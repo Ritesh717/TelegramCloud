@@ -125,7 +125,7 @@ export function useSyncQueue() {
         return;
       }
 
-      await dbService.recordUpload(item.assetId, hash, (result as any).id || 0, 'me');
+      await dbService.recordUpload(item.assetId, hash, ((result as any)?.id || (result as any)?.messageId || 0) as number, 'me');
       await dbService.updateQueueItem(item.assetId, {
         status: 'completed',
         progress: 1,
@@ -232,16 +232,18 @@ export function useSyncQueue() {
             return;
           }
 
-          const result = results[index];
-          if (result?.error) {
-            await markRetry(candidate.item, new Error(result.error));
+          const result = results?.[index];
+          // If the backend didn't return a record for this item, it failed to process it
+          if (!result || result.error) {
+            const errorMsg = result?.error || 'No result received from server for this item';
+            await markRetry(candidate.item, new Error(errorMsg));
             return;
           }
 
           await dbService.recordUpload(
             candidate.item.assetId,
             candidate.hash,
-            (result as any)?.id || 0,
+            ((result as any).messageId || (result as any).id || 0) as number,
             'me'
           );
           await dbService.updateQueueItem(candidate.item.assetId, {
@@ -296,18 +298,18 @@ export function useSyncQueue() {
   useEffect(() => {
     isMountedRef.current = true;
     refreshQueueState();
-    processQueue();
-
-    const interval = setInterval(() => {
-      refreshQueueState();
-      processQueue();
-    }, 1500);
+    const runLoop = async () => {
+      while (isMountedRef.current) {
+        await processQueue();
+        await wait(1500);
+      }
+    };
+    runLoop();
 
     return () => {
       isMountedRef.current = false;
-      clearInterval(interval);
     };
-  }, [processQueue, refreshQueueState]);
+  }, [processQueue]);
 
   const addToQueue = useCallback(async (assets: PendingAsset[]) => {
     await dbService.enqueueUploads(

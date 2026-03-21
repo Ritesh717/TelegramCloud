@@ -20,19 +20,25 @@ export async function computeFileHash(fileUri: string): Promise<string> {
     }
 
     const fileSize = (fileInfo as any).size || 0;
-    fallbackFingerprint = `${fileUri}|${fileSize}|${(fileInfo as any).modificationTime || 0}`;
 
-    // For large files, content hashing is too slow/memory intensive on mobile
-    // A metadata fingerprint (URI + size + modTime) is extremely reliable for local deduplication
+    // For large files (>5MB), reading the whole file into JS memory (Base64) 
+    // will crash the app. We use a Sample Fingerprint: Start + Middle + End + Size.
     if (fileSize >= SMALL_FILE_THRESHOLD) {
-        const metaString = `${fileUri}|${fileSize}|${(fileInfo as any).modificationTime || 0}`;
-        return await Crypto.digestStringAsync(
-          Crypto.CryptoDigestAlgorithm.SHA256,
-          metaString
-        );
+      const sampleSize = 64 * 1024; // 64KB samples
+      const middleOffset = Math.max(0, Math.floor(fileSize / 2) - Math.floor(sampleSize / 2));
+      const endOffset = Math.max(0, fileSize - sampleSize);
+
+      const [start, middle, end] = await Promise.all([
+        FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64, length: sampleSize, position: 0 }),
+        FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64, length: sampleSize, position: middleOffset }),
+        FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64, length: sampleSize, position: endOffset }),
+      ]);
+
+      const fingerprint = `${fileSize}|${start}|${middle}|${end}`;
+      return await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, fingerprint);
     }
 
-    // For small files, read content (Base64 is unavoidable with current EXPO FS, but small enough here)
+    // For small files (<5MB), read the full content for a perfect hash
     const content = await FileSystem.readAsStringAsync(fileUri, {
       encoding: FileSystem.EncodingType.Base64,
     });

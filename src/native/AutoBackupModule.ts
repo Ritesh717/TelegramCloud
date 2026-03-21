@@ -62,7 +62,6 @@ export const autoBackupModule = {
 
   async getStatus(): Promise<AutoBackupStatus> {
     if (!this.isAvailable() || !nativeModule) {
-      console.warn('[AutoBackupModule] getStatus skipped because native module is unavailable');
       return emptyStatus();
     }
     const status = await nativeModule.getStatus();

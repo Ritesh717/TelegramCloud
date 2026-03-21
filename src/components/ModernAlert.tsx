@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -23,6 +23,10 @@ interface ModernAlertProps {
   loading?: boolean;
 }
 
+// Hoist Animated values so they're created once, not per-instance
+const opacityAnim = new Animated.Value(0);
+const translateYAnim = new Animated.Value(14);
+
 export function ModernAlert({
   visible,
   title,
@@ -35,25 +39,26 @@ export function ModernAlert({
   statusText,
   loading,
 }: ModernAlertProps) {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(14)).current;
-
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      opacityAnim.setValue(0);
+      translateYAnim.setValue(14);
+      return;
+    }
 
     Animated.parallel([
-      Animated.timing(opacity, {
+      Animated.timing(opacityAnim, {
         toValue: 1,
         duration: THEME.motion.normal,
         useNativeDriver: true,
       }),
-      Animated.timing(translateY, {
+      Animated.timing(translateYAnim, {
         toValue: 0,
         duration: THEME.motion.normal,
         useNativeDriver: true,
       }),
     ]).start();
-  }, [opacity, translateY, visible]);
+  }, [visible]);
 
   if (!visible) return null;
 
@@ -64,8 +69,8 @@ export function ModernAlert({
           style={[
             styles.card,
             {
-              opacity,
-              transform: [{ translateY }],
+              opacity: opacityAnim,
+              transform: [{ translateY: translateYAnim }],
             },
           ]}
         >

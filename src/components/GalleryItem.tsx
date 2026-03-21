@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { Cloud, Play } from "lucide-react-native";
+import { Check, Cloud, Play } from "lucide-react-native";
 import React from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { MediaAsset } from "../hooks/useMedia";
@@ -9,10 +9,11 @@ interface GalleryItemProps {
   asset: MediaAsset;
   onPress: (asset: MediaAsset) => void;
   itemWidth: number;
+  isBackedUp?: boolean;
 }
 
 export const GalleryItem = React.memo(
-  ({ asset, onPress, itemWidth }: GalleryItemProps) => {
+  ({ asset, onPress, itemWidth, isBackedUp }: GalleryItemProps) => {
     return (
       <Pressable
         onPress={() => onPress(asset)}
@@ -30,12 +31,12 @@ export const GalleryItem = React.memo(
           recyclingKey={asset.id}
         />
 
-        {asset.isUploaded ? (
+        {isBackedUp ? (
           <View style={styles.uploadedBadge}>
             <Cloud
               size={12}
-              color={THEME.colors.primary}
-              fill={THEME.colors.primary}
+              color={THEME.colors.primaryStrong}
+              fill={THEME.colors.primaryStrong}
             />
           </View>
         ) : null}

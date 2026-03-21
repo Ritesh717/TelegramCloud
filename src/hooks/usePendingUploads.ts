@@ -68,29 +68,28 @@ export function usePendingUploads() {
 
     const toHash = assets.filter(a => !recordedSet.has(a.id))
 
-    const workers = []
+    // Use a synchronous queue to avoid race conditions between workers
+    const queue: MediaLibrary.Asset[] = [...toHash];
+    const results: Array<{ asset: MediaLibrary.Asset; hash: string | null }> = [];
 
-    for (let i = 0; i < HASH_CONCURRENCY; i++) {
-      workers.push(
-        (async () => {
-          while (toHash.length > 0) {
-            const asset = toHash.pop()
-            if (!asset) return
+    const worker = async () => {
+      while (true) {
+        const asset = queue.shift();
+        if (!asset) break;
 
-            try {
-              const hash = await computeFileHash(asset.uri)
-              const exists = await dbService.isFileUploaded(hash)
+        try {
+          const hash = await computeFileHash(asset.uri);
+          const exists = await dbService.isFileUploaded(hash);
 
-              if (exists) {
-                await dbService.recordUpload(asset.id, hash, 0, 'remapped')
-              }
-            } catch {}
+          if (exists) {
+            await dbService.recordUpload(asset.id, hash, 0, 'remapped');
           }
-        })()
-      )
-    }
+          results.push({ asset, hash });
+        } catch {}
+      }
+    };
 
-    await Promise.all(workers)
+    await Promise.all(Array.from({ length: HASH_CONCURRENCY }, () => worker()))
 
     processedRef.value += assets.length
 
@@ -178,11 +177,11 @@ export function usePendingUploads() {
         let after = lastCursor.current
 
         while (newPending.length < limit && !cancelRef.current) {
-          const result = await MediaLibrary.getAssetsAsync({
-            first: APP_CONSTANTS.SYNC.SCAN_BATCH_SIZE,
+          const result: MediaLibrary.PagedInfo<MediaLibrary.Asset> = await MediaLibrary.getAssetsAsync({
+            first: Math.max(limit, APP_CONSTANTS.SYNC.SCAN_BATCH_SIZE || 50),
             after,
             mediaType,
-            sortBy: [MediaLibrary.SortBy.creationTime]
+            sortBy: [[MediaLibrary.SortBy.creationTime, false] as any]
           })
 
           if (result.assets.length === 0) {
@@ -195,20 +194,21 @@ export function usePendingUploads() {
 
           for (const asset of result.assets) {
             if (!uploadedSet.has(asset.id)) {
-              const info =
-                asset.fileSize != null
-                  ? { exists: true, size: asset.fileSize }
-                  : await FileSystem.getInfoAsync(asset.uri)
+              // Note: fileSize is usually present on Android, but FileSystem.getInfoAsync is an expensive fallback.
+              let size = 0;
+              if ((asset as any).fileSize != null) {
+                size = (asset as any).fileSize;
+              } else {
+                const info = await FileSystem.getInfoAsync(asset.uri);
+                if (info.exists) size = info.size;
+              }
 
-              if (!info.exists) continue
-              if (!passesSizeFilter(info.size, sizeFilter)) continue
+              if (size === 0 || !passesSizeFilter(size, sizeFilter)) continue;
 
               newPending.push({
                 ...asset,
-                fileSize: info.size
+                fileSize: size
               })
-
-              if (newPending.length >= limit) break
             }
           }
 

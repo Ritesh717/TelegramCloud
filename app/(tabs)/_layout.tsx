@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Tabs, useRouter } from 'expo-router';
-import { Cloud, CloudDownload, Image as ImageIcon, Library } from 'lucide-react-native';
+import { CloudUpload, CloudDownload, Image as ImageIcon, Library, LucideIcon } from 'lucide-react-native';
 import { Animated, Pressable, StyleSheet, View } from 'react-native';
 import { THEME } from '../../src/theme/theme';
 import { dbService, QueueStatus } from '../../src/api/Database';
@@ -8,10 +8,10 @@ import { autoBackupModule } from '../../src/native/AutoBackupModule';
 
 const TAB_META: Record<
   string,
-  { title: string; Icon: React.ComponentType<{ color?: string; size?: number }> }
+  { title: string; Icon: LucideIcon }
 > = {
   index: { title: 'Photos', Icon: ImageIcon },
-  uploads: { title: 'Backup', Icon: Cloud },
+  uploads: { title: 'Sync', Icon: CloudUpload },
   cloud: { title: 'Cloud', Icon: CloudDownload },
   library: { title: 'Library', Icon: Library },
 };
@@ -70,11 +70,11 @@ export default function TabLayout() {
     const refreshQueueSnapshot = async () => {
       const [snapshot, nativeStatus] = await Promise.all([
         dbService.getQueueSnapshot(),
-        autoBackupModule.getStatus(),
+        autoBackupModule.isAvailable() ? autoBackupModule.getStatus() : undefined,
       ]);
       if (!mounted) return;
       setQueueStatuses(snapshot.items.map((item) => item.status));
-      setNativeUploadActive(nativeStatus.uploadActive || nativeStatus.activeUploadCount > 0);
+      setNativeUploadActive(nativeStatus ? (nativeStatus.uploadActive || nativeStatus.activeUploadCount > 0) : false);
     };
 
     refreshQueueSnapshot();
@@ -179,7 +179,6 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.colors.surface,
     borderTopWidth: 1,
     borderTopColor: THEME.colors.borderSoft,
-    elevation: 0,
     ...THEME.shadow.soft,
   },
   tabBarItem: {

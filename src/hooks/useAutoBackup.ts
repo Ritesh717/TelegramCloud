@@ -45,7 +45,7 @@ export function useAutoBackup(onSyncedUploads?: () => void) {
   const refresh = useCallback(async () => {
     console.log('[useAutoBackup] refresh start');
     if (!autoBackupModule.isAvailable()) {
-      console.warn('[useAutoBackup] native auto backup module unavailable during refresh');
+      console.log('[useAutoBackup] native auto backup module unavailable during refresh');
       setStatus(EMPTY_STATUS);
       setLoading(false);
       return;
@@ -149,11 +149,20 @@ export function useAutoBackup(onSyncedUploads?: () => void) {
     pendingVideoApprovals: status.pendingVideoApprovals as NativeAutoBackupAsset[],
     isAvailable: autoBackupModule.isAvailable(),
   }), [
-    approvePendingVideos,
+    // Note: status is intentionally included so the returned object updates when status changes
+    // status contains primitive values so reference equality is acceptable here
     loading,
-    refresh,
+    status.enabled,
+    status.startedAt,
+    status.lastScanAt,
+    status.lastUploadedAt,
+    status.uploadedPhotoCount,
+    status.uploadActive,
+    status.activeUploadCount,
+    status.pendingVideoApprovals,
     setEnabled,
+    refresh,
+    approvePendingVideos,
     skipPendingVideos,
-    status,
   ]);
 }

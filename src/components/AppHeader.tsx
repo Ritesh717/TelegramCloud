@@ -1,15 +1,15 @@
-import React from 'react';
+import React, { memo, useCallback } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LucideIcon } from 'lucide-react-native';
 import { THEME } from '../theme/theme';
 
-interface HeaderAction {
+export interface HeaderAction {
   icon: LucideIcon;
   onPress?: () => void;
 }
 
-interface AppHeaderProps {
+export interface AppHeaderProps {
   eyebrow?: string;
   title: string;
   subtitle?: string;
@@ -17,7 +17,7 @@ interface AppHeaderProps {
   paddingHorizontal?: number;
 }
 
-export function AppHeader({
+export const AppHeader = memo<AppHeaderProps>(function AppHeader({
   eyebrow,
   title,
   subtitle,
@@ -25,6 +25,10 @@ export function AppHeader({
   paddingHorizontal = THEME.spacing.md,
 }: AppHeaderProps) {
   const insets = useSafeAreaInsets();
+
+  const handleActionPress = useCallback((action: HeaderAction) => {
+    action.onPress?.();
+  }, []);
 
   return (
     <View style={[styles.wrap, { paddingTop: insets.top + 8, paddingHorizontal }]}>
@@ -43,7 +47,7 @@ export function AppHeader({
                 <TouchableOpacity
                   key={`${title}-action-${index}`}
                   style={styles.actionButton}
-                  onPress={action.onPress}
+                  onPress={() => handleActionPress(action)}
                   activeOpacity={0.8}
                 >
                   <Icon size={20} color={THEME.colors.textSecondary} />
@@ -55,7 +59,7 @@ export function AppHeader({
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: {

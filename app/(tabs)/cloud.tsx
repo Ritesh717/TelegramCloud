@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,7 +11,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Cloud, Download, Image as ImageIcon, PlayCircle } from 'lucide-react-native';
+import { useNavigation } from 'expo-router';
+import { Image } from 'expo-image';
+import { Cloud, Download, Image as ImageIcon, PlayCircle, Video } from 'lucide-react-native';
 
 import { AppHeader } from '../../src/components/AppHeader';
 import { MediaViewer, ViewerMedia } from '../../src/components/MediaViewer';
@@ -21,8 +23,24 @@ import { formatDate, formatFileSize } from '../../src/utils/formatters';
 
 type CloudFilter = 'all' | 'photos' | 'videos' | 'recent';
 
+// eslint-disable-next-line react/display-name
+const TopChip = React.memo(({ label, active = false, onPress }: { label: string; active?: boolean; onPress: () => void }) => (
+  <TouchableOpacity style={[styles.topChip, active && styles.topChipActive]} activeOpacity={0.88} onPress={onPress}>
+    <Text style={[styles.topChipText, active && styles.topChipTextActive]}>{label}</Text>
+  </TouchableOpacity>
+));
+
 export default function CloudScreen() {
-  const { media, loading, refreshing, refresh, ensureLocalUri, downloadToDevice } = useCloudMedia();
+  const navigation = useNavigation();
+  const { media, loading, refreshing, refresh, ensureLocalUri, downloadToDevice, loadMoreCloudMedia } = useCloudMedia();
+  
+  useEffect(() => {
+    // Refresh only when tab is navigated to, without crashing
+    const unsubscribe = navigation.addListener('focus', () => {
+      refresh();
+    });
+    return unsubscribe;
+  }, [navigation, refresh]);
   const [filter, setFilter] = useState<CloudFilter>('all');
   const [viewerAsset, setViewerAsset] = useState<ViewerMedia | null>(null);
   const [viewerVisible, setViewerVisible] = useState(false);
@@ -50,7 +68,7 @@ export default function CloudScreen() {
     }
   }, [filter, media]);
 
-  const handleOpenItem = async (item: CloudMedia) => {
+  const handleOpenItem = useCallback(async (item: CloudMedia) => {
     try {
       setDownloadingId(item.id);
       const uri = await ensureLocalUri(item);
@@ -66,9 +84,9 @@ export default function CloudScreen() {
     } finally {
       setDownloadingId(null);
     }
-  };
+  }, [ensureLocalUri]);
 
-  const handleDownload = async (item: CloudMedia) => {
+  const handleDownload = useCallback(async (item: CloudMedia) => {
     try {
       setDownloadingId(item.id);
       await downloadToDevice(item);
@@ -78,9 +96,15 @@ export default function CloudScreen() {
     } finally {
       setDownloadingId(null);
     }
-  };
+  }, [downloadToDevice]);
 
-  const renderItem = ({ item }: { item: CloudMedia }) => {
+  // Stable chip press handlers
+  const handleChipAll = useCallback(() => setFilter('all'), []);
+  const handleChipPhotos = useCallback(() => setFilter('photos'), []);
+  const handleChipVideos = useCallback(() => setFilter('videos'), []);
+  const handleChipRecent = useCallback(() => setFilter('recent'), []);
+
+  const renderItem = useCallback(({ item }: { item: CloudMedia }) => {
     const isDownloading = downloadingId === item.id;
 
     return (
@@ -123,7 +147,7 @@ export default function CloudScreen() {
         </TouchableOpacity>
       </TouchableOpacity>
     );
-  };
+  }, [downloadingId, handleOpenItem, handleDownload]);
 
   return (
     <View style={styles.container}>
@@ -143,65 +167,70 @@ export default function CloudScreen() {
           },
         ]}
       >
-        {loading && !refreshing ? (
+        {loading && !refreshing && media.length === 0 ? (
           <View style={styles.loaderWrap}>
             <ActivityIndicator size="large" color={THEME.colors.primary} />
-            <Text style={styles.loaderText}>Refreshing your cloud archive...</Text>
+            <Text style={styles.loaderText}>Finding your latest uploads...{'\n'}One moment please.</Text>
           </View>
         ) : (
           <FlatList
             data={filteredMedia}
             keyExtractor={(item) => item.id.toString()}
             renderItem={renderItem}
+            onEndReached={loadMoreCloudMedia}
+            onEndReachedThreshold={0.5}
+            initialNumToRender={10}
+            maxToRenderPerBatch={20}
+            windowSize={5}
             contentContainerStyle={[styles.listContent, filteredMedia.length === 0 && styles.emptyList]}
             ListHeaderComponent={
               <View>
                 <AppHeader eyebrow="Cloud archive" title="Cloud archive" paddingHorizontal={0} />
 
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-                  <TopChip label="All items" active={filter === 'all'} onPress={() => setFilter('all')} />
-                  <TopChip label="Photos" active={filter === 'photos'} onPress={() => setFilter('photos')} />
-                  <TopChip label="Videos" active={filter === 'videos'} onPress={() => setFilter('videos')} />
-                  <TopChip label="Recent" active={filter === 'recent'} onPress={() => setFilter('recent')} />
+                  <TopChip label="All items" active={filter === 'all'} onPress={handleChipAll} />
+                  <TopChip label="Photos" active={filter === 'photos'} onPress={handleChipPhotos} />
+                  <TopChip label="Videos" active={filter === 'videos'} onPress={handleChipVideos} />
+                  <TopChip label="Recent" active={filter === 'recent'} onPress={handleChipRecent} />
                 </ScrollView>
 
                 <View style={styles.summaryRow}>
                   <View style={styles.summaryCard}>
-                    <Text style={styles.summaryLabel}>Total</Text>
+                    <Text style={styles.summaryLabel}>Cloud items</Text>
+                    <Text style={styles.summaryValue}>{media.length}</Text>
+                  </View>
+                  <View style={styles.summaryCard}>
+                    <Text style={styles.summaryLabel}>Current view</Text>
                     <Text style={styles.summaryValue}>{filteredMedia.length}</Text>
                   </View>
-                  <View style={styles.summaryCard}>
-                    <Text style={styles.summaryLabel}>Photos</Text>
+                  <View style={[styles.summaryCard, styles.summaryCardLast]}>
+                    <Text style={styles.summaryLabel}>Videos</Text>
                     <Text style={styles.summaryValue}>
-                      {filteredMedia.filter((item) => item.media.type === 'photo').length}
+                      {media.filter((item) => item.media.type === 'video').length}
                     </Text>
                   </View>
-                  <View style={styles.summaryCard}>
-                    <Text style={styles.summaryLabel}>Videos </Text>
-                    <Text style={styles.summaryValue}>
-                      {filteredMedia.filter((item) => item.media.type === 'video').length}
-                    </Text>
-                  </View>
-                  {/* <View style={[styles.summaryCard, styles.summaryCardLast]}>
-                    <Text style={styles.summaryLabel}>Latest item</Text>
-                    <Text style={styles.summaryValue} numberOfLines={1}>
-                      {filteredMedia[0] ? new Date(filteredMedia[0].date).toLocaleDateString() : '-'}
-                    </Text>
-                  </View> */}
                 </View>
               </View>
             }
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={THEME.colors.primary} />}
-            ListEmptyComponent={
-              <View style={styles.emptyWrap}>
-                <View style={styles.emptyIcon}>
-                  <Cloud size={32} color={THEME.colors.primary} />
-                </View>
-                <Text style={styles.emptyTitle}>No backed up items yet</Text>
-                <Text style={styles.emptyText}>
-                  Items you back up from your device will appear here and can be previewed or downloaded later.
-                </Text>
+            ListFooterComponent={loading && media.length > 0 ? (
+              <View style={styles.footerLoader}>
+                <ActivityIndicator color={THEME.colors.primary} />
+                <Text style={styles.footerText}>Paging through your cloud...</Text>
               </View>
+            ) : null}
+            ListEmptyComponent={
+              !loading ? (
+                <View style={styles.emptyWrap}>
+                  <View style={styles.emptyIcon}>
+                    <Cloud size={32} color={THEME.colors.primary} />
+                  </View>
+                  <Text style={styles.emptyTitle}>No backed up items found</Text>
+                  <Text style={styles.emptyText}>
+                    If you've recently backed up files, pull down to refresh or try running a Scan on the Sync screen.
+                  </Text>
+                </View>
+              ) : null
             }
           />
         )}
@@ -209,22 +238,6 @@ export default function CloudScreen() {
 
       <MediaViewer isVisible={viewerVisible} asset={viewerAsset} onClose={() => setViewerVisible(false)} />
     </View>
-  );
-}
-
-function TopChip({
-  label,
-  active = false,
-  onPress,
-}: {
-  label: string;
-  active?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity style={[styles.topChip, active && styles.topChipActive]} activeOpacity={0.88} onPress={onPress}>
-      <Text style={[styles.topChipText, active && styles.topChipTextActive]}>{label}</Text>
-    </TouchableOpacity>
   );
 }
 
@@ -376,5 +389,14 @@ const styles = StyleSheet.create({
     color: THEME.colors.textSecondary,
     marginTop: THEME.spacing.sm,
     textAlign: 'center',
+  },
+  footerLoader: {
+    paddingVertical: THEME.spacing.xl,
+    alignItems: 'center',
+    gap: THEME.spacing.sm,
+  },
+  footerText: {
+    ...THEME.typography.label,
+    color: THEME.colors.textSecondary,
   },
 });

@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { memo, useCallback } from 'react';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Check, Circle } from 'lucide-react-native';
 import { THEME } from '../theme/theme';
 
@@ -7,15 +7,22 @@ interface DateHeaderProps {
   title: string;
   onAction?: () => void;
   completed?: boolean;
+  loading?: boolean;
 }
 
-export const DateHeader = ({ title, onAction, completed = false }: DateHeaderProps) => {
+export const DateHeader = memo<DateHeaderProps>(function DateHeader({ title, onAction, completed = false, loading = false }) {
+  const handleAction = useCallback(() => {
+    onAction?.();
+  }, [onAction]);
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{title}</Text>
       {onAction ? (
-        <TouchableOpacity style={styles.button} onPress={onAction} activeOpacity={0.85}>
-          {completed ? (
+        <TouchableOpacity style={styles.button} onPress={handleAction} activeOpacity={0.85} disabled={loading || completed}>
+          {loading ? (
+            <ActivityIndicator size="small" color={THEME.colors.primary} />
+          ) : completed ? (
             <View style={[styles.circleButton, styles.circleButtonActive]}>
               <Check size={14} color={THEME.colors.white} />
             </View>
@@ -28,7 +35,7 @@ export const DateHeader = ({ title, onAction, completed = false }: DateHeaderPro
       ) : null}
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

@@ -11,12 +11,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { telegramService } from '../../src/api/TelegramClient';
 import { useAppStore } from '../../src/store/useAppStore';
 import { THEME } from '../../src/theme/theme';
 
 function LoginScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const setAuthenticated = useAppStore((state) => state.setAuthenticated);
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -86,7 +88,7 @@ function LoginScreen() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+      style={[styles.container, { paddingTop: insets.top }]}
     >
       <StatusBar barStyle="dark-content" />
       <Stack.Screen options={{ title: 'Log in', headerShown: false }} />

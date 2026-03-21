@@ -54,8 +54,7 @@ class TelegramService {
     }
 
     if (!sessionSecret) {
-        console.warn('[TelegramService] No SESSION_SECRET provided, cannot load local session file');
-        return '';
+      throw new Error('[TelegramService] No SESSION_SECRET provided and no TG_SESSION env var set. Cannot proceed without a session.');
     }
 
     if (!fs.existsSync(sessionFile)) {
@@ -69,8 +68,7 @@ class TelegramService {
       console.log('[TelegramService] Session loaded and decrypted from local storage');
       return session;
     } catch (e: any) {
-      console.error('[TelegramService] Failed to decrypt session file:', e);
-      return '';
+      throw new Error(`[TelegramService] Failed to decrypt session file: ${e.message}`);
     }
   }
 
@@ -107,11 +105,11 @@ class TelegramService {
     return this.client;
   }
 
-  async sendCode(phoneNumber: string) {
-    console.log(`[TelegramService] Sending code to: ${phoneNumber}`);
+  async sendCode(_phoneNumber: string) {
+    console.log('[TelegramService] Sending code to user');
     await this.ensureConnected();
     try {
-        const result = await this.client.sendCode({ apiId, apiHash }, phoneNumber);
+        const result = await this.client.sendCode({ apiId, apiHash }, _phoneNumber);
         console.log('[TelegramService] Code sent successfully');
         return result;
     } catch (e: any) {
@@ -175,7 +173,7 @@ class TelegramService {
     peer: any,
     options: {
       file: any;
-      caption?: string;
+      caption?: string | string[];
       forceDocument?: boolean;
       workers?: number;
     }
@@ -208,12 +206,20 @@ class TelegramService {
   async getMessageById(peer: any, messageId: number) {
     await this.ensureConnected();
     const result = await this.client.getMessages(peer, { ids: [messageId] as any });
+    if (!result || (Array.isArray(result) && result.length === 0)) {
+      return null;
+    }
     return Array.isArray(result) ? result[0] : result;
   }
 
   async downloadMessageMedia(message: any) {
     await this.ensureConnected();
     return this.client.downloadMedia(message, {}) as Promise<Buffer | string | undefined>;
+  }
+
+  async searchHistory(peer: any, query: string, limit = 1) {
+    await this.ensureConnected();
+    return this.client.getMessages(peer, { search: query, limit } as any);
   }
 }
 

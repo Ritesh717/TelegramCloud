@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(node:*)",
+      "Bash(./gradlew --version)",
+      "Bash(./gradlew assembleDebug --stacktrace)",
+      "Bash(\"/c/Program Files/Android/Android Studio/jbr/bin/java.exe\" -version 2>&1)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" ./gradlew assembleDebug)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" ./gradlew assembleDebug --info)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" ./gradlew assembleDebug --stacktrace)",
+      "Bash(npx expo:*)",
+      "Bash(./gradlew --stop 2>&1)",
+      "Bash(tasklist)",
+      "Bash(taskkill //F //IM java.exe)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" ./gradlew assembleDebug --refresh-dependencies)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" ./gradlew :expo-av:assembleDebug --info)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" ANDROID_HOME=\"/c/Users/rites/AppData/Local/Android/Sdk\" ./gradlew assembleDebug)"
+    ]
+  }
+}

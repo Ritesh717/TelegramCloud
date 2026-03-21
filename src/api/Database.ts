@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { DeviceEventEmitter } from 'react-native';
 import { APP_CONSTANTS } from '../constants/AppConstants';
 
 export interface UploadedFile {
@@ -129,7 +130,7 @@ class DBService {
       CREATE INDEX IF NOT EXISTS idx_uploaded_hash ON uploaded_files(hash);
       CREATE INDEX IF NOT EXISTS idx_uploaded_asset_id ON uploaded_files(assetId);
       CREATE INDEX IF NOT EXISTS idx_media_index_hash ON media_index(hash);
-      CREATE INDEX IF NOT EXISTS idx_media_index_created_at ON media_index(createdAt DESC);
+      CREATE INDEX IF NOT EXISTS idx_media_index_created_at ON media_index(createdAt DESC, telegramMessageId DESC);
       CREATE INDEX IF NOT EXISTS idx_upload_queue_status ON upload_queue(status, nextRetryAt, updatedAt);
     `);
   }
@@ -195,12 +196,19 @@ class DBService {
     for (let i = 0; i < assetIds.length; i += chunkSize) {
       const chunk = assetIds.slice(i, i + chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
-      const query = `SELECT assetId FROM uploaded_files WHERE assetId IN (${placeholders})`;
-      const results = await this.db!.getAllAsync<{ assetId: string | null }>(query, chunk);
 
-      results.forEach((row) => {
-        if (row.assetId) uploadedAssetIds.add(row.assetId);
-      });
+      // Check both uploaded_files and media_index for the assetId
+      const queries = [
+        `SELECT assetId FROM uploaded_files WHERE assetId IN (${placeholders})`,
+        `SELECT assetId FROM media_index WHERE assetId IN (${placeholders})`
+      ];
+
+      for (const query of queries) {
+        const results = await this.db!.getAllAsync<{ assetId: string | null }>(query, chunk);
+        results.forEach((row) => {
+          if (row.assetId) uploadedAssetIds.add(row.assetId);
+        });
+      }
     }
 
     return uploadedAssetIds;
@@ -208,8 +216,16 @@ class DBService {
 
   async getSyncedCount(): Promise<number> {
     await this.initialize();
+    // Count unique assetIds that are successfully recorded as uploaded or detected as remapped
     const result = await this.db!.getFirstAsync<{ count: number }>(
-      'SELECT COUNT(*) as count FROM uploaded_files'
+      `
+      SELECT COUNT(DISTINCT assetId) as count 
+      FROM (
+        SELECT assetId FROM uploaded_files WHERE assetId IS NOT NULL
+        UNION
+        SELECT assetId FROM media_index WHERE assetId IS NOT NULL
+      )
+      `
     );
     return result?.count ?? 0;
   }
@@ -233,9 +249,10 @@ class DBService {
     if (records.length === 0) return;
     await this.initialize();
 
-    for (const record of records) {
-      await this.db!.runAsync(
-        `
+    await this.db!.withTransactionAsync(async () => {
+      for (const record of records) {
+        await this.db!.runAsync(
+          `
           INSERT INTO media_index (
             telegramMessageId, assetId, hash, filename, mediaType, mimeType, size,
             caption, thumbnailUri, createdAt, syncedAt, metadataJson
@@ -253,23 +270,24 @@ class DBService {
             createdAt = excluded.createdAt,
             syncedAt = excluded.syncedAt,
             metadataJson = COALESCE(excluded.metadataJson, media_index.metadataJson)
-        `,
-        [
-          record.telegramMessageId,
-          record.assetId ?? null,
-          record.hash ?? null,
-          record.filename,
-          record.mediaType,
-          record.mimeType ?? null,
-          record.size,
-          record.caption ?? null,
-          record.thumbnailUri ?? null,
-          record.createdAt,
-          record.syncedAt,
-          record.metadataJson ?? null,
-        ]
-      );
-    }
+          `,
+          [
+            record.telegramMessageId,
+            record.assetId ?? null,
+            record.hash ?? null,
+            record.filename,
+            record.mediaType,
+            record.mimeType ?? null,
+            record.size,
+            record.caption ?? null,
+            record.thumbnailUri ?? null,
+            record.createdAt,
+            record.syncedAt,
+            record.metadataJson ?? null,
+          ]
+        );
+      }
+    });
   }
 
   async getIndexedMedia(limit = 100): Promise<MediaIndexRecord[]> {
@@ -513,6 +531,7 @@ class DBService {
       DELETE FROM sync_state;
       DELETE FROM upload_queue;
     `);
+    DeviceEventEmitter.emit('database_wiped');
   }
 }
 

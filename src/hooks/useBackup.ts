@@ -80,7 +80,7 @@ export function useBackup() {
       fetchSyncStats();
       refreshMedia();
     }
-  }, [isBackingUp, uploadAsset, refreshMedia, fetchSyncStats]);
+  }, [isBackingUp, uploadAsset, refreshMedia, fetchSyncStats, normalizeTimestamp]);
 
   const deepScanDevice = useCallback(async () => {
     try {
@@ -103,12 +103,19 @@ export function useBackup() {
       const response = await fetch(url, {
         headers: { [APP_CONSTANTS.NETWORK.API_KEY_HEADER]: CONFIG.API_KEY }
       });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
+
       const data = await response.json();
-      
+
       if (data.hashes && data.hashes.length > 0) {
         const total = data.hashes.length;
         for (let i = 0; i < total; i++) {
           const hash = data.hashes[i];
+          if (typeof hash !== 'string' || !hash) continue;
           console.log('Restoring hash:', hash);
           await dbService.recordUpload(null, hash, 1, 'Restored from Telegram');
           console.log('Stored hash:', hash);

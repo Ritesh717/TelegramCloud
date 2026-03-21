@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
+import { DeviceEventEmitter } from 'react-native';
 
 import { dbService, MediaIndexRecord } from '../api/Database';
 import { telegramService } from '../api/TelegramClient';
@@ -82,10 +83,12 @@ export function useCloudMedia() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const cachedUriMapRef = useRef(new Map<number, string>());
+  const syncingRef = useRef(false);
 
   const loadFromIndex = useCallback(async () => {
-    const indexed = await dbService.getIndexedMedia(200);
-    const mapped = indexed.map(toCloudMedia).sort((a, b) => b.date - a.date);
+    const indexed = await dbService.getIndexedMedia(5000);
+    // Sort primarily by date (newest first), then by messageId (newest first)
+    const mapped = indexed.map(toCloudMedia).sort((a, b) => (b.date - a.date) || (b.id - a.id));
     cachedUriMapRef.current = new Map(
       mapped
         .filter((item) => !!item.cachedUri)
@@ -97,24 +100,16 @@ export function useCloudMedia() {
 
   const syncCloudMedia = useCallback(
     async (isRefresh = false) => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
 
       try {
-        const checkpoint = await dbService.getSyncCheckpoint(CLOUD_SYNC_SCOPE);
-        const response = await telegramService.fetchCloudMedia(100);
+        // ALWAYS fetch the newest files from Telegram (offsetId 0)
+        const response = await telegramService.fetchCloudMedia(100, 0);
         const items = response.media || [];
-        const records = await updateIndexFromRemote(items);
-
-        const latestMessageId = records.reduce(
-          (max, record) => Math.max(max, record.telegramMessageId),
-          checkpoint.lastMessageId
-        );
-
-        if (latestMessageId > checkpoint.lastMessageId) {
-          await dbService.setSyncCheckpoint(CLOUD_SYNC_SCOPE, latestMessageId);
-        }
-
+        await updateIndexFromRemote(items);
         await loadFromIndex();
       } catch (e) {
         console.error('[useCloudMedia] Error:', e);
@@ -122,17 +117,48 @@ export function useCloudMedia() {
       } finally {
         setLoading(false);
         setRefreshing(false);
+        syncingRef.current = false;
       }
     },
     [loadFromIndex]
   );
 
+  const loadMoreCloudMedia = useCallback(async () => {
+    if (loading || refreshing || media.length === 0) return;
+    setLoading(true);
+    try {
+      // Find the oldest message ID we have in the current list
+      const oldestId = media.reduce((min, item) => Math.min(min, item.id), media[0].id);
+
+      // Fetch media older than the oldest message ID
+      const response = await telegramService.fetchCloudMedia(100, oldestId);
+      const items = (response.media || []).filter((item: any) => item.id < oldestId);
+      
+      if (items.length > 0) {
+        await updateIndexFromRemote(items);
+        await loadFromIndex();
+      }
+    } catch (e) {
+      console.error('[loadMoreCloudMedia] Error:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [loading, refreshing, media, loadFromIndex]);
+
+  // Initial sync and wipe listener
   useEffect(() => {
     (async () => {
       await FileSystem.makeDirectoryAsync(CLOUD_MEDIA_CACHE_DIR, { intermediates: true }).catch(() => {});
       await loadFromIndex();
       await syncCloudMedia();
     })();
+
+    const sub = DeviceEventEmitter.addListener('database_wiped', () => {
+      setMedia([]);
+      loadFromIndex();
+    });
+
+    return () => sub.remove();
   }, [loadFromIndex, syncCloudMedia]);
 
   const downloadToDevice = useCallback(async (item: CloudMedia) => {
@@ -225,5 +251,6 @@ export function useCloudMedia() {
     refresh: () => syncCloudMedia(true),
     downloadToDevice: saveToDeviceLibrary,
     ensureLocalUri,
+    loadMoreCloudMedia,
   };
 }

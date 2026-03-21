@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, ScrollView, StatusBar, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Image, ScrollView, StatusBar, Switch, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useLocalSearchParams } from 'expo-router';
 import { Check, Circle, RefreshCw, RotateCcw, Scan, Video, XCircle } from 'lucide-react-native';
@@ -18,6 +18,15 @@ const PAGE_SIZE = APP_CONSTANTS.UI.LISTS.PAGE_SIZE;
 const SCREEN_GUTTER = THEME.spacing.md;
 type ActivityFilter = 'all' | 'in_progress' | 'awaiting_approval';
 
+// eslint-disable-next-line react/display-name
+const FilterItem = React.memo(function FilterItem({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={[styles.filterChip, active && styles.filterChipActive]} onPress={onPress} activeOpacity={0.88}>
+      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+});
+
 export default function UploadsScreen() {
   const params = useLocalSearchParams<{ filter?: string }>();
   const { pendingAssets, loading, hasNextPage, fetchPending, scanProgress, scanStatus, totalPending } = usePendingUploads();
@@ -27,14 +36,18 @@ export default function UploadsScreen() {
   const [filter, setFilter] = useState<FetchOptions>({
     mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
     sizeFilter: 'all',
-    limit: PAGE_SIZE,
+    limit: PAGE_SIZE * 3, // Fetch enough items so the list is scrollable, triggering onEndReached
   });
+  // Ref to avoid stale closure in callbacks that depend on filter
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all');
   const [isScanAlertVisible, setIsScanAlertVisible] = useState(false);
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
-  const handleNativeUploadSynced = React.useCallback(() => {
-    fetchPending(filter, true);
-  }, [fetchPending, filter]);
+
+  const handleNativeUploadSynced = useCallback(() => {
+    fetchPending(filterRef.current, true);
+  }, [fetchPending]);
   const {
     status: autoBackupStatus,
     setEnabled: setAutoBackupEnabled,
@@ -46,7 +59,8 @@ export default function UploadsScreen() {
 
   useEffect(() => {
     fetchPending(filter, true);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Intentionally run once on mount with current filter
 
   useEffect(() => {
     if (params.filter === 'in_progress') {
@@ -93,63 +107,121 @@ export default function UploadsScreen() {
     [activityFilter, completedIds, pendingAssets, queueByAssetId, uploadingIds]
   );
 
-  const handleFilterChange = (newFilter: Partial<FetchOptions>) => {
-    const updated = { ...filter, ...newFilter };
+  // Auto-fetch if user uploads items and truncates the active list below typical screen size
+  useEffect(() => {
+    if (
+      activityFilter !== 'awaiting_approval' &&
+      filteredAssets.length < PAGE_SIZE &&
+      hasNextPage &&
+      !loading
+    ) {
+      // Small timeout to prevent aggressive polling if sync clears out instantly
+      const t = setTimeout(() => {
+        fetchPending(filterRef.current, false);
+      }, 500);
+      return () => clearTimeout(t);
+    }
+  }, [filteredAssets.length, hasNextPage, loading, fetchPending, activityFilter]);
+
+  const handleFilterChange = useCallback((newFilter: Partial<FetchOptions>) => {
+    const updated = { ...filterRef.current, ...newFilter };
     setFilter(updated);
     setSelectedIds(new Set());
     setCompletedIds(new Set());
     fetchPending(updated, true);
-  };
+  }, [fetchPending]);
 
-  const handleActivityFilterChange = (nextFilter: ActivityFilter) => {
+  const handleActivityFilterChange = useCallback((nextFilter: ActivityFilter) => {
     setActivityFilter(nextFilter);
     setSelectedIds(new Set());
-  };
+  }, []);
 
-  const awaitingApprovalItems = useMemo(() => pendingVideoApprovals, [pendingVideoApprovals]);
-
-  const toggleSelect = (assetId: string) => {
+  const toggleSelect = useCallback((assetId: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(assetId)) next.delete(assetId);
       else next.add(assetId);
       return next;
     });
-  };
+  }, []);
 
-  const handleSelectPage = () => {
+  const handleSelectAll = useCallback(() => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       filteredAssets.slice(0, PAGE_SIZE).forEach((asset) => next.add(asset.id));
       return next;
     });
-  };
+  }, [filteredAssets]);
 
-  const handleSyncSelected = () => {
+  // Stable filter bar handlers
+  const handleFilterAll = useCallback(() => {
+    handleActivityFilterChange('all');
+    handleFilterChange({ mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video] });
+  }, [handleActivityFilterChange, handleFilterChange]);
+  const handleFilterPhotos = useCallback(() => {
+    handleActivityFilterChange('all');
+    handleFilterChange({ mediaType: [MediaLibrary.MediaType.photo] });
+  }, [handleActivityFilterChange, handleFilterChange]);
+  const handleFilterVideos = useCallback(() => {
+    handleActivityFilterChange('all');
+    handleFilterChange({ mediaType: [MediaLibrary.MediaType.video] });
+  }, [handleActivityFilterChange, handleFilterChange]);
+  const handleFilterSmall = useCallback(() => {
+    handleActivityFilterChange('all');
+    handleFilterChange({ sizeFilter: 'small' });
+  }, [handleActivityFilterChange, handleFilterChange]);
+  const handleFilterLarge = useCallback(() => {
+    handleActivityFilterChange('all');
+    handleFilterChange({ sizeFilter: 'large' });
+  }, [handleActivityFilterChange, handleFilterChange]);
+  const handleFilterInProgress = useCallback(() => handleActivityFilterChange('in_progress'), [handleActivityFilterChange]);
+  const handleFilterAwaitingApproval = useCallback(() => handleActivityFilterChange('awaiting_approval'), [handleActivityFilterChange]);
+
+  // Auto backup handlers
+  const handleToggleAutoBackup = useCallback((value: boolean) => {
+    setAutoBackupEnabled(value);
+  }, [setAutoBackupEnabled]);
+  const handleApproveAllVideos = useCallback(() => {
+    approvePendingVideos(pendingVideoApprovals.map((item) => item.assetId));
+  }, [approvePendingVideos, pendingVideoApprovals]);
+  const handleSkipAllVideos = useCallback(() => {
+    skipPendingVideos(pendingVideoApprovals.map((item) => item.assetId));
+  }, [skipPendingVideos, pendingVideoApprovals]);
+  const handleShowScanAlert = useCallback(() => setIsScanAlertVisible(true), []);
+  const handleConfirmScan = useCallback(() => {
+    setIsScanAlertVisible(false);
+    fetchPending({ ...filterRef.current, deepScan: true }, true);
+  }, [fetchPending]);
+  const handleCancelScanAlert = useCallback(() => setIsScanAlertVisible(false), []);
+  const handleApproveAllFromBottomBar = useCallback(() => {
+    approvePendingVideos(pendingVideoApprovals.map((item) => item.assetId));
+  }, [approvePendingVideos, pendingVideoApprovals]);
+  const handleSyncAllVisible = useCallback(() => {
+    addToQueue(filteredAssets);
+    setSelectedIds(new Set());
+  }, [addToQueue, filteredAssets]);
+  const handleSyncSelected = useCallback(() => {
     const selected = filteredAssets.filter((asset) => selectedIds.has(asset.id));
     if (selected.length === 0) return;
     addToQueue(selected);
     setSelectedIds(new Set());
-  };
+  }, [filteredAssets, selectedIds, addToQueue]);
 
-  const handleSyncAllVisible = () => {
-    addToQueue(filteredAssets);
-    setSelectedIds(new Set());
-  };
-
-  const loadMore = () => {
+  const loadMore = useCallback(() => {
     if (hasNextPage && !loading) {
-      fetchPending(filter);
+      fetchPending(filterRef.current);
     }
-  };
+  }, [hasNextPage, loading, fetchPending]);
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     setSelectedIds(new Set());
     setCompletedIds(new Set());
-    fetchPending(filter, true);
-  };
+    fetchPending(filterRef.current, true);
+  }, [fetchPending]);
 
-  const renderItem = ({ item }: { item: PendingAsset }) => {
+  const awaitingApprovalItems = useMemo(() => pendingVideoApprovals, [pendingVideoApprovals]);
+
+  const renderItem = useCallback(({ item }: { item: PendingAsset }) => {
     const queueItem = queueByAssetId.get(item.id);
     const isProcessing = uploadingIds.has(item.id);
     const statusLabel = queueItem
@@ -217,9 +289,9 @@ export default function UploadsScreen() {
         </View>
       </TouchableOpacity>
     );
-  };
+  }, [queueByAssetId, uploadingIds, selectedIds, toggleSelect, cancelUpload, retryUpload]);
 
-  const renderApprovalItem = ({ item }: { item: NativeAutoBackupAsset }) => (
+  const renderApprovalItem = useCallback(({ item }: { item: NativeAutoBackupAsset }) => (
     <View style={styles.item}>
       <View style={styles.thumbnailWrap}>
         <Image source={{ uri: item.uri }} style={styles.thumbnail} />
@@ -255,32 +327,30 @@ export default function UploadsScreen() {
         </TouchableOpacity>
       </View>
     </View>
-  );
+  ), [approvePendingVideos, skipPendingVideos]);
 
-  const listHeader = (
+  const listHeader = useMemo(() => (
     <View style={styles.container}>
       <AppHeader
-        eyebrow="Backup queue"
-        title="Backup queue"
+        title="Sync Files"
         paddingHorizontal={0}
-        // subtitle="Review pending photos and videos, then send them to your cloud archive with a simple, reliable backup flow."
         rightActions={[
-          { icon: Scan, onPress: () => setIsScanAlertVisible(true) },
+          { icon: Scan, onPress: handleShowScanAlert },
           { icon: RefreshCw, onPress: handleRefresh },
         ]}
       />
 
       <View style={styles.summaryRow}>
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Pending</Text>
+          <Text style={styles.summaryLabel}>Not backed up</Text>
           <Text style={styles.summaryValue}>{totalPending}</Text>
         </View>
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Active</Text>
+          <Text style={styles.summaryLabel}>Uploading</Text>
           <Text style={styles.summaryValue}>{activeCount}</Text>
         </View>
         <View style={[styles.summaryCard, styles.summaryCardLast]}>
-          <Text style={styles.summaryLabel}>Queue</Text>
+          <Text style={styles.summaryLabel}>Pending queue</Text>
           <Text style={styles.summaryValue}>{queueLength}</Text>
         </View>
       </View>
@@ -299,18 +369,11 @@ export default function UploadsScreen() {
             </Text>
             <Switch
               value={autoBackupStatus.enabled}
-              onValueChange={(value) => {
-                console.log('[UploadsScreen] auto backup toggle changed', {
-                  value,
-                  currentEnabled: autoBackupStatus.enabled,
-                  autoBackupLoading,
-                });
-                setAutoBackupEnabled(value);
-              }}
+              onValueChange={handleToggleAutoBackup}
               disabled={autoBackupLoading}
               trackColor={{
                 false: THEME.colors.borderSoft,
-                true: '#A8C7FA',
+                true: THEME.colors.toggleTrackOn,
               }}
               thumbColor={autoBackupStatus.enabled ? THEME.colors.primary : THEME.colors.white}
               ios_backgroundColor={THEME.colors.borderSoft}
@@ -331,22 +394,22 @@ export default function UploadsScreen() {
           </View>
           <View style={styles.autoBackupStat}>
             <Text style={styles.autoBackupStatLabel}>Videos awaiting approval</Text>
-            <Text style={styles.autoBackupStatValue}>{awaitingApprovalItems.length}</Text>
+            <Text style={styles.autoBackupStatValue}>{pendingVideoApprovals.length}</Text>
           </View>
         </View>
 
-        {awaitingApprovalItems.length > 0 ? (
+        {pendingVideoApprovals.length > 0 ? (
           <View style={styles.autoBackupActions}>
             <TouchableOpacity
               style={styles.secondaryButton}
-              onPress={() => approvePendingVideos(awaitingApprovalItems.map((item) => item.assetId))}
+              onPress={handleApproveAllVideos}
               activeOpacity={0.88}
             >
               <Text style={styles.secondaryButtonText}>Upload all videos</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.secondaryButton}
-              onPress={() => skipPendingVideos(awaitingApprovalItems.map((item) => item.assetId))}
+              onPress={handleSkipAllVideos}
               activeOpacity={0.88}
             >
               <Text style={styles.secondaryButtonText}>Skip all videos</Text>
@@ -364,42 +427,19 @@ export default function UploadsScreen() {
 
       <View style={styles.filterBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          <FilterItem label="All" active={activityFilter === 'all' && filter.mediaType?.length === 2} onPress={() => {
-            handleActivityFilterChange('all');
-            handleFilterChange({ mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video] });
-          }} />
-          <FilterItem
-            label="Photos"
-            active={filter.mediaType?.length === 1 && filter.mediaType[0] === MediaLibrary.MediaType.photo}
-            onPress={() => {
-              handleActivityFilterChange('all');
-              handleFilterChange({ mediaType: [MediaLibrary.MediaType.photo] });
-            }}
-          />
-          <FilterItem
-            label="Videos"
-            active={filter.mediaType?.length === 1 && filter.mediaType[0] === MediaLibrary.MediaType.video}
-            onPress={() => {
-              handleActivityFilterChange('all');
-              handleFilterChange({ mediaType: [MediaLibrary.MediaType.video] });
-            }}
-          />
-          <FilterItem label="In progress" active={activityFilter === 'in_progress'} onPress={() => handleActivityFilterChange('in_progress')} />
-          <FilterItem label="Awaiting approval" active={activityFilter === 'awaiting_approval'} onPress={() => handleActivityFilterChange('awaiting_approval')} />
-          <FilterItem label="Small" active={filter.sizeFilter === 'small'} onPress={() => {
-            handleActivityFilterChange('all');
-            handleFilterChange({ sizeFilter: 'small' });
-          }} />
-          <FilterItem label="Large" active={filter.sizeFilter === 'large'} onPress={() => {
-            handleActivityFilterChange('all');
-            handleFilterChange({ sizeFilter: 'large' });
-          }} />
+          <FilterItem label="All" active={activityFilter === 'all' && filter.mediaType?.length === 2} onPress={handleFilterAll} />
+          <FilterItem label="Photos" active={activityFilter === 'all' && filter.mediaType?.length === 1 && filter.mediaType[0] === MediaLibrary.MediaType.photo} onPress={handleFilterPhotos} />
+          <FilterItem label="Videos" active={activityFilter === 'all' && filter.mediaType?.length === 1 && filter.mediaType[0] === MediaLibrary.MediaType.video} onPress={handleFilterVideos} />
+          <FilterItem label="In progress" active={activityFilter === 'in_progress'} onPress={handleFilterInProgress} />
+          <FilterItem label="Awaiting approval" active={activityFilter === 'awaiting_approval'} onPress={handleFilterAwaitingApproval} />
+          <FilterItem label="Small" active={filter.sizeFilter === 'small'} onPress={handleFilterSmall} />
+          <FilterItem label="Large" active={filter.sizeFilter === 'large'} onPress={handleFilterLarge} />
         </ScrollView>
       </View>
 
       {activityFilter !== 'awaiting_approval' ? (
         <View style={styles.primaryActions}>
-          <TouchableOpacity style={styles.secondaryButton} onPress={handleSelectPage} activeOpacity={0.88}>
+          <TouchableOpacity style={styles.secondaryButton} onPress={handleSelectAll} activeOpacity={0.88}>
             <Text style={styles.secondaryButtonText}>Select page</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.primaryButton} onPress={handleSyncSelected} activeOpacity={0.9} disabled={selectedIds.size === 0}>
@@ -408,7 +448,7 @@ export default function UploadsScreen() {
         </View>
       ) : null}
     </View>
-  );
+  ), [totalPending, activeCount, queueLength, autoBackupStatus, autoBackupLoading, pendingVideoApprovals.length, activityFilter, filter, handleToggleAutoBackup, handleApproveAllVideos, handleSkipAllVideos, handleFilterAll, handleFilterPhotos, handleFilterVideos, handleFilterInProgress, handleFilterAwaitingApproval, handleFilterSmall, handleFilterLarge, handleSelectAll, handleSyncSelected, selectedIds.size, handleShowScanAlert, handleRefresh]);
 
   return (
     <View style={styles.container}>
@@ -422,11 +462,8 @@ export default function UploadsScreen() {
             ? 'Scanning your device for items that were already backed up before the local database existed.'
             : 'This will verify every file in your library against the cloud index. Continue?'
         }
-        onCancel={!loading ? () => setIsScanAlertVisible(false) : undefined}
-        onConfirm={() => {
-          setIsScanAlertVisible(false);
-          fetchPending({ ...filter, deepScan: true }, true);
-        }}
+        onCancel={!loading ? handleCancelScanAlert : undefined}
+        onConfirm={handleConfirmScan}
         confirmText="Start scan"
         progress={scanProgress}
         statusText={scanStatus}
@@ -434,7 +471,7 @@ export default function UploadsScreen() {
       />
 
       <FlashList
-        data={(activityFilter === 'awaiting_approval' ? awaitingApprovalItems : filteredAssets) as any[]}
+        data={(activityFilter === 'awaiting_approval' ? pendingVideoApprovals : filteredAssets) as any[]}
         renderItem={activityFilter === 'awaiting_approval' ? renderApprovalItem : renderItem as any}
         keyExtractor={(item: any) => ('assetId' in item ? item.assetId : item.id)}
         estimatedItemSize={88}
@@ -469,10 +506,10 @@ export default function UploadsScreen() {
         {activityFilter === 'awaiting_approval' ? (
           <TouchableOpacity
             style={styles.bottomButton}
-            onPress={() => approvePendingVideos(awaitingApprovalItems.map((item) => item.assetId))}
+            onPress={handleApproveAllFromBottomBar}
             activeOpacity={0.9}
           >
-            <Text style={styles.bottomButtonText}>Upload approved videos ({awaitingApprovalItems.length})</Text>
+            <Text style={styles.bottomButtonText}>Upload approved videos ({pendingVideoApprovals.length})</Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.bottomButton} onPress={handleSyncAllVisible} activeOpacity={0.9}>
@@ -481,14 +518,6 @@ export default function UploadsScreen() {
         )}
       </View>
     </View>
-  );
-}
-
-function FilterItem({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <TouchableOpacity style={[styles.filterChip, active && styles.filterChipActive]} onPress={onPress} activeOpacity={0.88}>
-      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{label}</Text>
-    </TouchableOpacity>
   );
 }
 

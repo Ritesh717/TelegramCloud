@@ -92,7 +92,8 @@ class TelegramService {
       const json = JSON.stringify(metadata);
       metadataB64 = btoa(unescape(encodeURIComponent(json)));
     } catch (e) {
-      console.warn('[TelegramClient] Metadata encoding failed:', e);
+      console.error('[TelegramClient] Metadata encoding failed:', e);
+      throw new Error('Failed to encode metadata for upload');
     }
 
     const url = `${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.UPLOAD}?filename=${encodeURIComponent(filename)}&fileSize=${fileSize}&metadata=${metadataB64}`;
@@ -110,15 +111,15 @@ class TelegramService {
     return JSON.parse(response.body);
   }
 
-  async uploadBatch(assets: { uri: string; filename: string; hash: string }[]) {
+  async uploadBatch(assets: Array<{ uri: string; filename: string; hash: string; fileSize?: number; metadata?: Record<string, unknown> }>) {
     const url = `${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.UPLOAD_BATCH}`;
     const formData = new FormData();
 
     const manifest = assets.map((asset) => ({
       filename: asset.filename,
       hash: asset.hash,
-      fileSize: (asset as any).fileSize || 0,
-      metadata: (asset as any).metadata || {},
+      fileSize: asset.fileSize || 0,
+      metadata: asset.metadata || {},
     }));
 
     formData.append('manifest', JSON.stringify(manifest));
@@ -145,9 +146,9 @@ class TelegramService {
     return response.json();
   }
 
-  async fetchCloudMedia(limit = 100) {
+  async fetchCloudMedia(limit = 100, offsetId = 0) {
     const response = await fetch(
-      `${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.CLOUD_MEDIA}?limit=${limit}`,
+      `${this.getBaseUrl()}${APP_CONSTANTS.NETWORK.API.CLOUD_MEDIA}?limit=${limit}&offsetId=${offsetId}`,
       {
         headers: this.getAuthHeaders(),
       }

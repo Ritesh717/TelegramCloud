@@ -1,4 +1,6 @@
 import { useState, useCallback } from 'react';
+import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
 import { telegramService } from '../api/TelegramClient';
 import { dbService } from '../api/Database';
 import { computeFileHash } from '../utils/HashUtils';
@@ -27,11 +29,11 @@ export function useUpload() {
       let fileSize = 0;
       let metadata: any = {};
       try {
-        const info = await (require('expo-file-system') as any).getInfoAsync(asset.uri);
-        fileSize = info.size || 0;
+        const info: any = await FileSystem.getInfoAsync(asset.uri);
+        fileSize = (info as any).size || 0;
 
         // Collect extra metadata from MediaLibrary
-        const assetInfo = await (require('expo-media-library') as any).getAssetInfoAsync(asset);
+        const assetInfo = await MediaLibrary.getAssetInfoAsync(asset);
         if (assetInfo.location) {
           metadata.location = assetInfo.location;
         }
@@ -45,8 +47,8 @@ export function useUpload() {
       const result = await telegramService.uploadFile(asset.uri, asset.filename, fileSize, metadata);
 
       // 6. Record in Database
-      // Note: result.id is the Telegram message ID
-      await dbService.recordUpload(asset.id, hash, (result as any).id, 'me');
+      // Note: result.id is the Telegram message ID (backend extracts it from sendFile response)
+      await dbService.recordUpload(asset.id, hash, ((result as any)?.id || (result as any)?.messageId || 0) as number, 'me');
 
       return { success: true, skipped: false };
     } catch (error) {
@@ -59,12 +61,4 @@ export function useUpload() {
   }, []);
 
   return { uploadAsset, uploadingId, progress };
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }

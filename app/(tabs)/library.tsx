@@ -230,14 +230,14 @@ export default function BackupScreen() {
       />
 
       <AppHeader
-        eyebrow="Backup health"
-        title="Backup center"
+        // eyebrow="Backup health"
+        title="Library"
         subtitle="Check your backup status, scan your device library, restore local records, and manage app storage."
       />
 
       <View style={styles.heroCard}>
         <View style={styles.heroHeader}>
-          <View style={[styles.heroIcon, { backgroundColor: fullySynced ? '#D7F8E3' : '#D3E3FD' }]}>
+          <View style={[styles.heroIcon, { backgroundColor: fullySynced ? THEME.colors.accentLight : THEME.colors.primaryLight }]}>
             {fullySynced ? (
               <CheckCircle2 size={26} color={THEME.colors.success} />
             ) : (
@@ -255,9 +255,9 @@ export default function BackupScreen() {
         </View>
 
         <View style={styles.metricsRow}>
-          <Metric label="Cloud" value={successCount} />
-          <Metric label="Tracked" value={syncedCount} />
-          <Metric label="Total" value={totalMediaCount} />
+          <Metric label="Backed up" value={successCount} />
+          <Metric label="Tracked files" value={syncedCount} />
+          <Metric label="Device items" value={totalMediaCount} />
         </View>
 
         <View style={styles.heroStatus}>
@@ -310,9 +310,9 @@ export default function BackupScreen() {
       </View>
 
       <View style={styles.storageMetricsRow}>
-        <Metric label="Indexed" value={storageSummary.indexedCount} />
-        <Metric label="Uploads" value={storageSummary.uploadedCount} />
-        <Metric label="Queue" value={storageSummary.queuedCount} />
+        <Metric label="Cloud cache" value={storageSummary.indexedCount} />
+        <Metric label="Upload records" value={storageSummary.uploadedCount} />
+        <Metric label="Pending queue" value={storageSummary.queuedCount} />
       </View>
 
       <ActionCard
@@ -356,16 +356,18 @@ export default function BackupScreen() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+// eslint-disable-next-line react/display-name
+const Metric = React.memo(function Metric({ label, value }: { label: string; value: number }) {
   return (
     <View style={styles.metric}>
       <Text style={styles.metricValue}>{value}</Text>
       <Text style={styles.metricLabel}>{label}</Text>
     </View>
   );
-}
+});
 
-function StorageCard({
+// eslint-disable-next-line react/display-name
+const StorageCard = React.memo(function StorageCard({
   icon,
   label,
   value,
@@ -386,9 +388,10 @@ function StorageCard({
       <Text style={styles.storageHelper}>{loading ? 'Checking local files...' : helper}</Text>
     </View>
   );
-}
+});
 
-function ActionCard({
+// eslint-disable-next-line react/display-name
+const ActionCard = React.memo(function ActionCard({
   icon,
   title,
   subtitle,
@@ -415,7 +418,7 @@ function ActionCard({
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -631,7 +634,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionPillDanger: {
-    backgroundColor: '#FCE8E6',
+    backgroundColor: THEME.colors.errorLight,
   },
   actionPillText: {
     ...THEME.typography.bodyMedium,
